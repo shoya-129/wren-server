@@ -1,10 +1,10 @@
 import { Injectable } from "@nestjs/common";
-import { UserService } from "src/user/user.service";
+import { UserService } from "../user/user.service";
 import { RegisterDto } from "./dto/register.user.dto";
 import { LoginUser } from "./dto/login.user.dto";
 import bcrypt from "bcrypt";
-import { db } from "src/db";
-import { users } from "src/db/schema";
+import { db } from "../db";
+import { users } from "../db/schema";
 import { eq, or } from "drizzle-orm";
 import { JwtService } from "@nestjs/jwt";
 
