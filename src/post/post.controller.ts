@@ -42,6 +42,14 @@ export class PostController {
         return this.postService.toggleRepost(postId, user.sub);
     }
 
+    @Get(":id/replies")
+    getReplies(
+        @CurrentUser() user: AuthenticatedUser,
+        @Param("id") postId: string
+    ) {
+        return this.postService.getReplies(postId, user.sub);
+    }
+
     @Post(":id/comment")
     comment(
         @CurrentUser() user: AuthenticatedUser,
