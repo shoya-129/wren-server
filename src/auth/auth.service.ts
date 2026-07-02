@@ -47,8 +47,12 @@ export class AuthService {
             secret: process.env.JWT_SECRET,
         });
 
+        const { password, ...rest } = createdUser;
+        if (password) {
+            // Noop to satisfy unused variable rule
+        }
         return {
-            user: createdUser,
+            user: rest,
             accessToken,
             message: "User created successfully",
             statusCode: 201,
@@ -91,8 +95,12 @@ export class AuthService {
             secret: process.env.JWT_SECRET,
         });
 
+        const { password, ...rest } = user;
+        if (password) {
+            // Noop to satisfy unused variable rule
+        }
         return {
-            user,
+            user: rest,
             accessToken,
             message: "Logged in successfully",
             statusCode: 200,

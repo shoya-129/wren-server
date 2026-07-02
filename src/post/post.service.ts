@@ -21,6 +21,7 @@ export interface FeedPost {
     username: string;
     name: string | null;
     avatar: string | null;
+    verified: boolean | null;
   };
   encryptedFeedKey: string | null;
   likesCount: number;
@@ -87,6 +88,7 @@ export class PostService {
             username: users.username,
             name: users.name,
             avatar: users.avatar,
+            verified: users.verified,
           },
           follow: {
             encryptedFeedKey: follows.encryptedFeedKey,
@@ -123,6 +125,7 @@ export class PostService {
             username: users.username,
             name: users.name,
             avatar: users.avatar,
+            verified: users.verified,
           },
           likesCount: likesCountSql,
           repostsCount: repostsCountSql,
@@ -189,6 +192,7 @@ export class PostService {
             username: users.username,
             name: users.name,
             avatar: users.avatar,
+            verified: users.verified,
           },
           likesCount: likesCountSql,
           repostsCount: repostsCountSql,
@@ -228,6 +232,7 @@ export class PostService {
           username: users.username,
           name: users.name,
           avatar: users.avatar,
+          verified: users.verified,
         },
         likesCount: likesCountSql,
         repostsCount: repostsCountSql,
@@ -368,6 +373,7 @@ export class PostService {
         username: string;
         name: string | null;
         avatar: string | null;
+        verified: boolean | null;
       };
       likesCount: number;
       repostsCount: number;
@@ -385,7 +391,13 @@ export class PostService {
       visibility: item.post.visibility,
       createdAt: item.post.createdAt,
       updatedAt: item.post.updatedAt,
-      author: item.author,
+      author: {
+        uid: item.author.uid,
+        username: item.author.username,
+        name: item.author.name,
+        avatar: item.author.avatar,
+        verified: item.author.verified ?? false,
+      },
       encryptedFeedKey: item.encryptedFeedKey ?? null,
       likesCount: item.likesCount,
       repostsCount: item.repostsCount,
@@ -411,6 +423,7 @@ export class PostService {
           username: users.username,
           name: users.name,
           avatar: users.avatar,
+          verified: users.verified,
         },
         follow: {
           encryptedFeedKey: follows.encryptedFeedKey,
@@ -467,6 +480,7 @@ export class PostService {
         username: users.username,
         name: users.name,
         avatar: users.avatar,
+        verified: users.verified,
       })
       .from(users)
       .where(eq(users.uid, uid));
@@ -475,7 +489,13 @@ export class PostService {
 
     return {
       ...newComment,
-      author,
+      author: {
+        uid: author.uid,
+        username: author.username,
+        name: author.name,
+        avatar: author.avatar,
+        verified: author.verified ?? false,
+      },
       encryptedFeedKey: null,
       likesCount: 0,
       repostsCount: 0,
