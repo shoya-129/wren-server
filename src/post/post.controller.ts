@@ -1,61 +1,84 @@
-import { Controller, Get, Post, Body, UseGuards, Query, Param } from "@nestjs/common";
-import { PostService } from "./post.service";
-import { CreatePostDto } from "./dto/create-post.dto";
-import { CreateCommentDto } from "./dto/create-comment.dto";
-import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Post,
+  Query,
+  UseGuards,
+} from "@nestjs/common";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
-import { AuthenticatedUser } from "../auth/interfaces/authenticated-request.interface";
+import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
+import { CreateCommentDto } from "./dto/create-comment.dto";
+import { CreatePostDto } from "./dto/create-post.dto";
+import { ReportPostDto } from "./dto/report-post.dto";
+import { PostService } from "./post.service";
 
 @Controller("posts")
 @UseGuards(JwtAuthGuard)
 export class PostController {
-    constructor(private readonly postService: PostService) {}
+  constructor(private readonly postService: PostService) {}
 
-    @Post()
-    create(@CurrentUser() user: AuthenticatedUser, @Body() createPostDto: CreatePostDto) {
-        return this.postService.createPost(user.sub, createPostDto);
-    }
+  @Post()
+  create(
+    @CurrentUser("sub") uid: string,
+    @Body() createPostDto: CreatePostDto,
+  ) {
+    return this.postService.createPost(uid, createPostDto);
+  }
 
-    @Get("feed")
-    getFeed(
-        @CurrentUser() user: AuthenticatedUser,
-        @Query("page") page?: string,
-        @Query("limit") limit?: string
-    ) {
-        const pageNum = page ? parseInt(page, 10) : 1;
-        const limitNum = limit ? parseInt(limit, 10) : 20;
-        return this.postService.getFeed(user.sub, pageNum, limitNum);
-    }
+  @Get("feed")
+  getFeed(
+    @CurrentUser("sub") uid: string,
+    @Query("page") page?: string,
+    @Query("limit") limit?: string,
+  ) {
+    const pageNum = page ? parseInt(page, 10) : 1;
+    const limitNum = limit ? parseInt(limit, 10) : 20;
+    return this.postService.getFeed(uid, pageNum, limitNum);
+  }
 
-    @Post(":id/like")
-    like(@CurrentUser() user: AuthenticatedUser, @Param("id") postId: string) {
-        return this.postService.toggleLike(postId, user.sub);
-    }
+  @Post(":id/like")
+  like(@CurrentUser("sub") uid: string, @Param("id") postId: string) {
+    return this.postService.toggleLike(postId, uid);
+  }
 
-    @Post(":id/dislike")
-    dislike(@CurrentUser() user: AuthenticatedUser, @Param("id") postId: string) {
-        return this.postService.toggleDislike(postId, user.sub);
-    }
+  @Post(":id/dislike")
+  dislike(@CurrentUser("sub") uid: string, @Param("id") postId: string) {
+    return this.postService.toggleDislike(postId, uid);
+  }
 
-    @Post(":id/repost")
-    repost(@CurrentUser() user: AuthenticatedUser, @Param("id") postId: string) {
-        return this.postService.toggleRepost(postId, user.sub);
-    }
+  @Post(":id/repost")
+  repost(@CurrentUser("sub") uid: string, @Param("id") postId: string) {
+    return this.postService.toggleRepost(postId, uid);
+  }
 
-    @Get(":id/replies")
-    getReplies(
-        @CurrentUser() user: AuthenticatedUser,
-        @Param("id") postId: string
-    ) {
-        return this.postService.getReplies(postId, user.sub);
-    }
+  @Post(":id/report")
+  reportPost(
+    @CurrentUser("sub") uid: string,
+    @Param("id") postId: string,
+    @Body() reportPostDto: ReportPostDto,
+  ) {
+    return this.postService.reportPost(postId, uid, reportPostDto);
+  }
 
-    @Post(":id/comment")
-    comment(
-        @CurrentUser() user: AuthenticatedUser,
-        @Param("id") postId: string,
-        @Body() createCommentDto: CreateCommentDto
-    ) {
-        return this.postService.createComment(postId, user.sub, createCommentDto);
-    }
+  @Get(":id/replies")
+  getReplies(@CurrentUser("sub") uid: string, @Param("id") postId: string) {
+    return this.postService.getReplies(postId, uid);
+  }
+
+  @Post(":id/comment")
+  comment(
+    @CurrentUser("sub") uid: string,
+    @Param("id") postId: string,
+    @Body() createCommentDto: CreateCommentDto,
+  ) {
+    return this.postService.createComment(postId, uid, createCommentDto);
+  }
+
+  @Delete(":id")
+  deletePost(@CurrentUser("sub") uid: string, @Param("id") postId: string) {
+    return this.postService.deletePost(postId, uid);
+  }
 }

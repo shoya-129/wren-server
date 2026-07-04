@@ -1,10 +1,34 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
-import { CreatePostDto } from './dto/create-post.dto';
-import { CreateCommentDto } from './dto/create-comment.dto';
-import { db } from '../db';
-import { posts, users, follows, likes, reposts, dislikes } from '../db/schema';
-import { eq, and, desc, ne, notInArray, sql, or, isNotNull } from 'drizzle-orm';
-import { CacheService } from '../cache/cache.service';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from "@nestjs/common";
+import {
+  and,
+  desc,
+  eq,
+  isNotNull,
+  isNull,
+  ne,
+  notInArray,
+  or,
+  sql,
+} from "drizzle-orm";
+import { CacheService } from "../cache/cache.service";
+import { db } from "../db";
+import {
+  dislikes,
+  follows,
+  likes,
+  postReports,
+  posts,
+  reposts,
+  users,
+} from "../db/schema";
+import { CreateCommentDto } from "./dto/create-comment.dto";
+import { CreatePostDto } from "./dto/create-post.dto";
+import { ReportPostDto } from "./dto/report-post.dto";
 
 export interface FeedPost {
   postId: string;
@@ -42,12 +66,11 @@ export class PostService {
         encryptedMedia: dto.encryptedMedia || null,
         replyTo: dto.replyTo || null,
         quoteTo: dto.quoteTo || null,
-        visibility: dto.visibility || 'followers',
+        visibility: dto.visibility || "followers",
       })
       .returning();
 
-    // Invalidate cached feeds across all users since a new post is added
-    this.cacheService.deletePattern('feed:');
+    this.cacheService.deletePattern("feed:");
 
     return newPost;
   }
@@ -59,27 +82,23 @@ export class PostService {
       return cachedResult;
     }
 
-    // Correlated subqueries to compute counts for likes, reposts, and replies safely
     const likesCountSql = sql<number>`coalesce((select count(*)::int from ${likes} where ${likes.postId} = ${posts.postId}), 0)`;
     const repostsCountSql = sql<number>`coalesce((select count(*)::int from ${reposts} where ${reposts.postId} = ${posts.postId}), 0)`;
-    const repliesCountSql = sql<number>`coalesce((select count(*)::int from ${posts} replies where replies.reply_to = ${posts.postId}), 0)`;
+    const repliesCountSql = sql<number>`coalesce((select count(*)::int from ${posts} replies where replies.reply_to = ${posts.postId} and replies.deleted_at is null), 0)`;
 
-    // 1. Get the list of users followed by the current user (where status = accepted)
     const followedUsers = await db
       .select({ followingId: follows.followingId })
       .from(follows)
-      .where(and(eq(follows.followerId, uid), eq(follows.status, 'accepted')));
+      .where(and(eq(follows.followerId, uid), eq(follows.status, "accepted")));
 
     const followedIds = followedUsers.map((f) => f.followingId);
 
     let combined: FeedPost[] = [];
 
     if (followedIds.length > 0) {
-      // Interleave followed posts with non-followed posts (80/20 split)
       const followedLimit = Math.ceil(limit * 0.8);
       const nonFollowedLimit = limit - followedLimit;
 
-      // Query posts from followed users (excluding own posts)
       const followedPosts = await db
         .select({
           post: posts,
@@ -104,19 +123,17 @@ export class PostService {
           and(
             eq(follows.followingId, posts.uid),
             eq(follows.followerId, uid),
-            eq(follows.status, 'accepted')
-          )
+            eq(follows.status, "accepted"),
+          ),
         )
-        .where(ne(posts.uid, uid)) // Exclude own posts
+        .where(and(ne(posts.uid, uid), isNull(posts.deletedAt)))
         .orderBy(desc(posts.createdAt))
         .limit(followedLimit)
         .offset((page - 1) * followedLimit);
 
-      // If followed posts run out, we fill the gap with non-followed posts
       const actualFollowedCount = followedPosts.length;
       const dynamicNonFollowedLimit = limit - actualFollowedCount;
 
-      // Query posts from non-followed users (excluding own posts and followed users)
       const nonFollowedPosts = await db
         .select({
           post: posts,
@@ -135,15 +152,15 @@ export class PostService {
         .innerJoin(users, eq(posts.uid, users.uid))
         .where(
           and(
-            or(ne(posts.uid, uid), isNotNull(posts.replyTo)), // Exclude own top-level posts but allow own replies
-            notInArray(posts.uid, followedIds) // Exclude followed users (safe because followedIds is not empty)
-          )
+            or(ne(posts.uid, uid), isNotNull(posts.replyTo)),
+            notInArray(posts.uid, followedIds),
+            isNull(posts.deletedAt),
+          ),
         )
         .orderBy(desc(posts.createdAt))
         .limit(dynamicNonFollowedLimit)
         .offset((page - 1) * nonFollowedLimit);
 
-      // Map and format results
       const mappedFollowed = followedPosts.map((item) => ({
         postId: item.post.postId,
         uid: item.post.uid,
@@ -172,18 +189,16 @@ export class PostService {
         createdAt: item.post.createdAt,
         updatedAt: item.post.updatedAt,
         author: item.author,
-        encryptedFeedKey: null, // Non-followed posts do not provide encrypted keys
+        encryptedFeedKey: null,
         likesCount: item.likesCount,
         repostsCount: item.repostsCount,
         repliesCount: item.repliesCount,
       }));
 
-      // Merge and sort chronologically (newest first)
       combined = [...mappedFollowed, ...mappedNonFollowed].sort(
-        (a, b) => b.createdAt.getTime() - a.createdAt.getTime()
+        (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
       );
     } else {
-      // User has no followings: fetch only non-followed posts (excluding own posts)
       const nonFollowedPosts = await db
         .select({
           post: posts,
@@ -200,7 +215,12 @@ export class PostService {
         })
         .from(posts)
         .innerJoin(users, eq(posts.uid, users.uid))
-        .where(or(ne(posts.uid, uid), isNotNull(posts.replyTo))) // Exclude own top-level posts but allow own replies
+        .where(
+          and(
+            or(ne(posts.uid, uid), isNotNull(posts.replyTo)),
+            isNull(posts.deletedAt),
+          ),
+        )
         .orderBy(desc(posts.createdAt))
         .limit(limit)
         .offset((page - 1) * limit);
@@ -216,14 +236,13 @@ export class PostService {
         createdAt: item.post.createdAt,
         updatedAt: item.post.updatedAt,
         author: item.author,
-        encryptedFeedKey: null, // Non-followed posts do not provide encrypted keys
+        encryptedFeedKey: null,
         likesCount: item.likesCount,
         repostsCount: item.repostsCount,
         repliesCount: item.repliesCount,
       }));
     }
 
-    // Always include the user's own replies so they can see their comments in threads
     const ownReplies = await db
       .select({
         post: posts,
@@ -240,7 +259,13 @@ export class PostService {
       })
       .from(posts)
       .innerJoin(users, eq(posts.uid, users.uid))
-      .where(and(eq(posts.uid, uid), isNotNull(posts.replyTo)))
+      .where(
+        and(
+          eq(posts.uid, uid),
+          isNotNull(posts.replyTo),
+          isNull(posts.deletedAt),
+        ),
+      )
       .orderBy(desc(posts.createdAt))
       .limit(100);
 
@@ -252,7 +277,7 @@ export class PostService {
         repostsCount: item.repostsCount,
         repliesCount: item.repliesCount,
         encryptedFeedKey: null,
-      })
+      }),
     );
 
     const existingIds = new Set(combined.map((p) => p.postId));
@@ -265,16 +290,18 @@ export class PostService {
 
     combined.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
 
-    // Save in cache for 10 seconds to speed up immediate transfers
     this.cacheService.set(cacheKey, combined, 10000);
 
     return combined;
   }
 
   async toggleLike(postId: string, uid: string) {
-    const [post] = await db.select().from(posts).where(eq(posts.postId, postId));
+    const [post] = await db
+      .select()
+      .from(posts)
+      .where(and(eq(posts.postId, postId), isNull(posts.deletedAt)));
     if (!post) {
-      throw new NotFoundException('Post not found');
+      throw new NotFoundException("Post not found");
     }
 
     const [existingLike] = await db
@@ -286,28 +313,28 @@ export class PostService {
       await db
         .delete(likes)
         .where(and(eq(likes.postId, postId), eq(likes.uid, uid)));
-      
-      this.cacheService.deletePattern('feed:');
-      return { liked: false, message: 'Unliked successfully' };
-    } else {
-      // Remove dislike first if liked
-      await db
-        .delete(dislikes)
-        .where(and(eq(dislikes.postId, postId), eq(dislikes.uid, uid)));
 
-      await db
-        .insert(likes)
-        .values({ postId, uid });
-
-      this.cacheService.deletePattern('feed:');
-      return { liked: true, message: 'Liked successfully' };
+      this.cacheService.deletePattern("feed:");
+      return { liked: false, message: "Unliked successfully" };
     }
+
+    await db
+      .delete(dislikes)
+      .where(and(eq(dislikes.postId, postId), eq(dislikes.uid, uid)));
+
+    await db.insert(likes).values({ postId, uid });
+
+    this.cacheService.deletePattern("feed:");
+    return { liked: true, message: "Liked successfully" };
   }
 
   async toggleDislike(postId: string, uid: string) {
-    const [post] = await db.select().from(posts).where(eq(posts.postId, postId));
+    const [post] = await db
+      .select()
+      .from(posts)
+      .where(and(eq(posts.postId, postId), isNull(posts.deletedAt)));
     if (!post) {
-      throw new NotFoundException('Post not found');
+      throw new NotFoundException("Post not found");
     }
 
     const [existingDislike] = await db
@@ -319,28 +346,28 @@ export class PostService {
       await db
         .delete(dislikes)
         .where(and(eq(dislikes.postId, postId), eq(dislikes.uid, uid)));
-      
-      this.cacheService.deletePattern('feed:');
-      return { disliked: false, message: 'Removed dislike successfully' };
-    } else {
-      // Remove like first if disliked
-      await db
-        .delete(likes)
-        .where(and(eq(likes.postId, postId), eq(likes.uid, uid)));
 
-      await db
-        .insert(dislikes)
-        .values({ postId, uid });
-
-      this.cacheService.deletePattern('feed:');
-      return { disliked: true, message: 'Disliked successfully' };
+      this.cacheService.deletePattern("feed:");
+      return { disliked: false, message: "Removed dislike successfully" };
     }
+
+    await db
+      .delete(likes)
+      .where(and(eq(likes.postId, postId), eq(likes.uid, uid)));
+
+    await db.insert(dislikes).values({ postId, uid });
+
+    this.cacheService.deletePattern("feed:");
+    return { disliked: true, message: "Disliked successfully" };
   }
 
   async toggleRepost(postId: string, uid: string) {
-    const [post] = await db.select().from(posts).where(eq(posts.postId, postId));
+    const [post] = await db
+      .select()
+      .from(posts)
+      .where(and(eq(posts.postId, postId), isNull(posts.deletedAt)));
     if (!post) {
-      throw new NotFoundException('Post not found');
+      throw new NotFoundException("Post not found");
     }
 
     const [existingRepost] = await db
@@ -352,35 +379,92 @@ export class PostService {
       await db
         .delete(reposts)
         .where(and(eq(reposts.postId, postId), eq(reposts.uid, uid)));
-      
-      this.cacheService.deletePattern('feed:');
-      return { reposted: false, message: 'Unreposted successfully' };
-    } else {
-      await db
-        .insert(reposts)
-        .values({ postId, uid });
 
-      this.cacheService.deletePattern('feed:');
-      return { reposted: true, message: 'Reposted successfully' };
+      this.cacheService.deletePattern("feed:");
+      return { reposted: false, message: "Unreposted successfully" };
     }
+
+    await db.insert(reposts).values({ postId, uid });
+
+    this.cacheService.deletePattern("feed:");
+    return { reposted: true, message: "Reposted successfully" };
   }
 
-  private mapPostRow(
-    item: {
-      post: typeof posts.$inferSelect;
-      author: {
-        uid: string;
-        username: string;
-        name: string | null;
-        avatar: string | null;
-        verified: boolean | null;
-      };
-      likesCount: number;
-      repostsCount: number;
-      repliesCount: number;
-      encryptedFeedKey?: string | null;
+  async reportPost(postId: string, reporterId: string, dto: ReportPostDto) {
+    const [post] = await db
+      .select({ postId: posts.postId, uid: posts.uid })
+      .from(posts)
+      .where(and(eq(posts.postId, postId), isNull(posts.deletedAt)));
+
+    if (!post) {
+      throw new NotFoundException("Post not found");
     }
-  ): FeedPost {
+
+    if (post.uid === reporterId) {
+      throw new BadRequestException("You cannot report your own post");
+    }
+
+    const [report] = await db
+      .insert(postReports)
+      .values({
+        postId,
+        reporterId,
+        reason: dto.reason,
+        details: dto.details || null,
+      })
+      .returning();
+
+    return {
+      message: "Post reported successfully",
+      report,
+    };
+  }
+
+  async deletePost(postId: string, uid: string) {
+    const [post] = await db
+      .select()
+      .from(posts)
+      .where(and(eq(posts.postId, postId), isNull(posts.deletedAt)));
+
+    if (!post) {
+      throw new NotFoundException("Post not found");
+    }
+
+    if (post.uid !== uid) {
+      throw new ForbiddenException("You can only delete your own post");
+    }
+
+    const [deletedPost] = await db
+      .update(posts)
+      .set({
+        deletedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(posts.postId, postId))
+      .returning();
+
+    this.cacheService.deletePattern("feed:");
+
+    return {
+      message: "Post deleted successfully",
+      postId: deletedPost.postId,
+    };
+  }
+
+  private mapPostRow(item: {
+    post: typeof posts.$inferSelect;
+    author: {
+      uid: string;
+      username: string;
+      name: string | null;
+      avatar: string | null;
+      verified: boolean | null;
+    };
+    likesCount: number;
+    repostsCount: number;
+    repliesCount: number;
+    encryptedFeedKey?: string | null;
+  }): FeedPost {
     return {
       postId: item.post.postId,
       uid: item.post.uid,
@@ -406,14 +490,17 @@ export class PostService {
   }
 
   async getReplies(postId: string, uid: string): Promise<FeedPost[]> {
-    const [parentPost] = await db.select().from(posts).where(eq(posts.postId, postId));
+    const [parentPost] = await db
+      .select()
+      .from(posts)
+      .where(and(eq(posts.postId, postId), isNull(posts.deletedAt)));
     if (!parentPost) {
-      throw new NotFoundException('Post not found');
+      throw new NotFoundException("Post not found");
     }
 
     const likesCountSql = sql<number>`coalesce((select count(*)::int from ${likes} where ${likes.postId} = ${posts.postId}), 0)`;
     const repostsCountSql = sql<number>`coalesce((select count(*)::int from ${reposts} where ${reposts.postId} = ${posts.postId}), 0)`;
-    const repliesCountSql = sql<number>`coalesce((select count(*)::int from ${posts} replies where replies.reply_to = ${posts.postId}), 0)`;
+    const repliesCountSql = sql<number>`coalesce((select count(*)::int from ${posts} replies where replies.reply_to = ${posts.postId} and replies.deleted_at is null), 0)`;
 
     const replyRows = await db
       .select({
@@ -439,10 +526,10 @@ export class PostService {
         and(
           eq(follows.followingId, posts.uid),
           eq(follows.followerId, uid),
-          eq(follows.status, 'accepted')
-        )
+          eq(follows.status, "accepted"),
+        ),
       )
-      .where(eq(posts.replyTo, postId))
+      .where(and(eq(posts.replyTo, postId), isNull(posts.deletedAt)))
       .orderBy(desc(posts.createdAt));
 
     return replyRows.map((item) =>
@@ -453,14 +540,17 @@ export class PostService {
         repostsCount: item.repostsCount,
         repliesCount: item.repliesCount,
         encryptedFeedKey: item.follow?.encryptedFeedKey ?? null,
-      })
+      }),
     );
   }
 
   async createComment(postId: string, uid: string, dto: CreateCommentDto) {
-    const [post] = await db.select().from(posts).where(eq(posts.postId, postId));
+    const [post] = await db
+      .select()
+      .from(posts)
+      .where(and(eq(posts.postId, postId), isNull(posts.deletedAt)));
     if (!post) {
-      throw new NotFoundException('Post not found');
+      throw new NotFoundException("Post not found");
     }
 
     const [newComment] = await db
@@ -485,7 +575,7 @@ export class PostService {
       .from(users)
       .where(eq(users.uid, uid));
 
-    this.cacheService.deletePattern('feed:');
+    this.cacheService.deletePattern("feed:");
 
     return {
       ...newComment,
@@ -503,4 +593,3 @@ export class PostService {
     };
   }
 }
-

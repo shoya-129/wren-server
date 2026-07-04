@@ -1,9 +1,10 @@
-import { Module } from '@nestjs/common';
-import { PostService } from './post.service';
-import { PostController } from './post.controller';
+import { Module } from "@nestjs/common";
+import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
+import { PostController } from "./post.controller";
+import { PostService } from "./post.service";
 
 @Module({
   controllers: [PostController],
-  providers: [PostService]
+  providers: [PostService, JwtAuthGuard],
 })
 export class PostModule {}
