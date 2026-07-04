@@ -10,7 +10,6 @@ import { CacheService } from "../cache/cache.service";
 import { db } from "../db";
 import { dislikes, follows, likes, posts, reposts, users } from "../db/schema";
 import { UpdateAccountStatusDto } from "./dto/update-account-status.dto";
-import { UpdatePrivacyDto } from "./dto/update-privacy.dto";
 
 export interface UserStatsSummary {
   followersCount: number;
@@ -27,11 +26,6 @@ export interface UserReachStats {
   potentialAudienceCount: number;
   publicPostsCount: number;
   followersOnlyPostsCount: number;
-}
-
-export interface UserPrivacySettings {
-  profileVisibility: "public" | "followers";
-  allowFollowRequests: boolean;
 }
 
 export interface UserProfilePost {
@@ -67,8 +61,6 @@ export interface PublicUserSummary {
   publicKey: string;
   verified: boolean;
   accountStatus: "active" | "suspended" | "banned";
-  profileVisibility: "public" | "followers";
-  allowFollowRequests: boolean;
   createdAt: Date | null;
   updatedAt: Date | null;
 }
@@ -111,11 +103,7 @@ type UserRecord = Pick<
   Partial<
     Pick<
       typeof users.$inferSelect,
-      | "isAdmin"
-      | "accountStatus"
-      | "suspendedUntil"
-      | "profileVisibility"
-      | "allowFollowRequests"
+      "isAdmin" | "accountStatus" | "suspendedUntil"
     >
   >;
 
@@ -146,20 +134,9 @@ export class UserService {
       encryptedFeedKey: users.encryptedFeedKey,
       salt: users.salt,
       verified: users.verified,
+      isAdmin: users.isAdmin,
       createdAt: users.createdAt,
       updatedAt: users.updatedAt,
-    };
-  }
-
-  private normalizePrivacySettings(
-    privacySettings?: Partial<UserPrivacySettings> | null,
-  ): UserPrivacySettings {
-    return {
-      profileVisibility:
-        privacySettings?.profileVisibility === "followers"
-          ? "followers"
-          : "public",
-      allowFollowRequests: privacySettings?.allowFollowRequests !== false,
     };
   }
 
@@ -207,7 +184,6 @@ export class UserService {
   }
 
   private sanitizeUser(user: UserRecord, includeAdmin = false) {
-    const privacySettings = this.normalizePrivacySettings(user);
     const moderationState = this.normalizeModerationState(user);
     const { password, isAdmin, accountStatus, suspendedUntil, ...rest } = user;
     if (password || isAdmin || accountStatus || suspendedUntil) {
@@ -217,21 +193,18 @@ export class UserService {
     if (includeAdmin) {
       return {
         ...rest,
-        ...privacySettings,
         ...moderationState,
       };
     }
 
     return {
       ...rest,
-      ...privacySettings,
       accountStatus: moderationState.accountStatus,
       suspendedUntil: moderationState.suspendedUntil,
     };
   }
 
   private toPublicUserSummary(user: UserRecord): PublicUserSummary {
-    const privacySettings = this.normalizePrivacySettings(user);
     const moderationState = this.normalizeModerationState(user);
 
     return {
@@ -243,8 +216,6 @@ export class UserService {
       publicKey: user.publicKey,
       verified: user.verified ?? false,
       accountStatus: moderationState.accountStatus,
-      profileVisibility: privacySettings.profileVisibility,
-      allowFollowRequests: privacySettings.allowFollowRequests,
       createdAt: user.createdAt ?? null,
       updatedAt: user.updatedAt ?? null,
     };
@@ -400,38 +371,11 @@ export class UserService {
     });
   }
 
-  async getPrivacySettings(uid: string): Promise<UserPrivacySettings> {
-    return this.getCachedUserSection(uid, "privacy", async () => {
-      try {
-        const [user] = await db
-          .select({
-            profileVisibility: users.profileVisibility,
-            allowFollowRequests: users.allowFollowRequests,
-          })
-          .from(users)
-          .where(eq(users.uid, uid));
-
-        if (!user) {
-          throw new NotFoundException("User not found");
-        }
-
-        return this.normalizePrivacySettings(user);
-      } catch (error) {
-        if (this.isMissingPrivacyColumnError(error)) {
-          return this.normalizePrivacySettings();
-        }
-
-        throw error;
-      }
-    });
-  }
-
   private async canViewerSeeProfilePosts(
     profileUserId: string,
     viewerId: string,
-    profileVisibility: "public" | "followers",
   ) {
-    if (profileUserId === viewerId || profileVisibility === "public") {
+    if (profileUserId === viewerId) {
       return true;
     }
 
@@ -530,16 +474,14 @@ export class UserService {
 
     const profileUserId = user.uid;
 
-    const [stats, reachStats, privacySettings] = await Promise.all([
+    const [stats, reachStats] = await Promise.all([
       this.getStatsSummary(profileUserId),
       this.getReachStats(profileUserId),
-      this.getPrivacySettings(profileUserId),
     ]);
 
     const canViewPosts = await this.canViewerSeeProfilePosts(
       profileUserId,
       viewerId,
-      privacySettings.profileVisibility,
     );
 
     const profilePosts = canViewPosts
@@ -554,7 +496,6 @@ export class UserService {
       user: this.sanitizeUser(user, viewerId === profileUserId),
       stats,
       reachStats,
-      privacySettings,
       canViewPosts,
       posts: profilePosts,
     };
@@ -578,23 +519,19 @@ export class UserService {
       throw new NotFoundException("User not found");
     }
 
-    const [stats, securityStats, reachStats, privacySettings] =
-      await Promise.all([
-        this.getStatsSummary(uid),
-        this.getSecurityStats(uid),
-        this.getReachStats(uid),
-        this.getPrivacySettings(uid),
-      ]);
+    const [stats, securityStats, reachStats] = await Promise.all([
+      this.getStatsSummary(uid),
+      this.getSecurityStats(uid),
+      this.getReachStats(uid),
+    ]);
 
     return {
       user: {
         ...this.sanitizeUser(user, true),
-        ...privacySettings,
       },
       stats,
       securityStats,
       reachStats,
-      privacySettings,
     };
   }
 
@@ -607,101 +544,18 @@ export class UserService {
 
     const uid = user.uid;
 
-    const [stats, reachStats, privacySettings] = await Promise.all([
+    const [stats, reachStats] = await Promise.all([
       this.getStatsSummary(uid),
       this.getReachStats(uid),
-      this.getPrivacySettings(uid),
     ]);
 
     return {
       user: {
         ...this.toPublicUserSummary(user),
-        ...privacySettings,
       },
       stats,
       reachStats,
-      privacySettings,
     };
-  }
-
-  async updatePrivacy(uid: string, dto: UpdatePrivacyDto) {
-    if (
-      dto.profileVisibility === undefined &&
-      dto.allowFollowRequests === undefined
-    ) {
-      throw new BadRequestException(
-        "At least one privacy field must be provided",
-      );
-    }
-
-    let existingUser: UserPrivacySettings | null = null;
-    let missingPrivacyColumns = false;
-
-    try {
-      const [user] = await db
-        .select({
-          profileVisibility: users.profileVisibility,
-          allowFollowRequests: users.allowFollowRequests,
-        })
-        .from(users)
-        .where(eq(users.uid, uid));
-
-      existingUser = user ?? null;
-    } catch (error) {
-      if (!this.isMissingPrivacyColumnError(error)) {
-        throw error;
-      }
-
-      missingPrivacyColumns = true;
-    }
-
-    if (missingPrivacyColumns) {
-      throw new BadRequestException(
-        "Privacy columns are not available in the database yet. Apply the latest migration first.",
-      );
-    }
-
-    if (!existingUser) {
-      throw new NotFoundException("User not found");
-    }
-
-    try {
-      const normalizedExistingSettings =
-        this.normalizePrivacySettings(existingUser);
-      const [updatedUser] = await db
-        .update(users)
-        .set({
-          profileVisibility:
-            dto.profileVisibility ??
-            normalizedExistingSettings.profileVisibility,
-          allowFollowRequests:
-            dto.allowFollowRequests ??
-            normalizedExistingSettings.allowFollowRequests,
-          updatedAt: new Date(),
-        })
-        .where(eq(users.uid, uid))
-        .returning({
-          profileVisibility: users.profileVisibility,
-          allowFollowRequests: users.allowFollowRequests,
-        });
-
-      const normalizedPrivacySettings =
-        this.normalizePrivacySettings(updatedUser);
-      this.invalidateUserProfileCaches(uid);
-
-      return {
-        message: "Privacy settings updated successfully",
-        privacySettings: normalizedPrivacySettings,
-      };
-    } catch (error) {
-      if (this.isMissingPrivacyColumnError(error)) {
-        throw new BadRequestException(
-          "Privacy columns are not available in the database yet. Apply the latest migration first.",
-        );
-      }
-
-      throw error;
-    }
   }
 
   async getAllUsers(
@@ -833,14 +687,6 @@ export class UserService {
 
     if (followerId === followingId) {
       throw new BadRequestException("You cannot follow yourself");
-    }
-
-    const targetPrivacySettings = await this.getPrivacySettings(followingId);
-
-    if (!targetPrivacySettings.allowFollowRequests) {
-      throw new ForbiddenException(
-        "This user is not accepting follow requests",
-      );
     }
 
     const [existingFollow] = await db

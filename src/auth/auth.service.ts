@@ -106,10 +106,6 @@ export class AuthService {
   private buildAuthResponseUser(
     user: AuthUserRecord,
     accountState: ReturnType<AuthService["normalizeAccountState"]>,
-    privacySettings: {
-      profileVisibility: "public" | "followers";
-      allowFollowRequests: boolean;
-    },
   ) {
     return {
       uid: user.uid,
@@ -126,8 +122,6 @@ export class AuthService {
       isAdmin: accountState.isAdmin,
       accountStatus: accountState.accountStatus,
       suspendedUntil: accountState.suspendedUntil,
-      profileVisibility: privacySettings.profileVisibility,
-      allowFollowRequests: privacySettings.allowFollowRequests,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
     };
@@ -163,12 +157,11 @@ export class AuthService {
       secret: process.env.JWT_SECRET,
     });
 
-    const [stats, securityStats, reachStats, privacySettings, accountState] =
+    const [stats, securityStats, reachStats, accountState] =
       await Promise.all([
         this.userService.getStatsSummary(createdUser.uid),
         this.userService.getSecurityStats(createdUser.uid),
         this.userService.getReachStats(createdUser.uid),
-        this.userService.getPrivacySettings(createdUser.uid),
         this.getAccountState(createdUser.uid),
       ]);
 
@@ -180,12 +173,10 @@ export class AuthService {
       user: this.buildAuthResponseUser(
         createdUser,
         accountState,
-        privacySettings,
       ),
       stats,
       securityStats,
       reachStats,
-      privacySettings,
       accessToken,
       message: "User created successfully",
       statusCode: 201,
@@ -272,12 +263,11 @@ export class AuthService {
       secret: process.env.JWT_SECRET,
     });
 
-    const [stats, securityStats, reachStats, privacySettings] =
+    const [stats, securityStats, reachStats] =
       await Promise.all([
         this.userService.getStatsSummary(user.uid),
         this.userService.getSecurityStats(user.uid),
         this.userService.getReachStats(user.uid),
-        this.userService.getPrivacySettings(user.uid),
       ]);
 
     const { password } = user;
@@ -285,11 +275,10 @@ export class AuthService {
       // Noop to satisfy unused variable rule
     }
     return {
-      user: this.buildAuthResponseUser(user, accountState, privacySettings),
+      user: this.buildAuthResponseUser(user, accountState),
       stats,
       securityStats,
       reachStats,
-      privacySettings,
       accessToken,
       message: "Logged in successfully",
       statusCode: 200,

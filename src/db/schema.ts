@@ -28,11 +28,6 @@ export const users = pgTable("users", {
     .default("active")
     .notNull(),
   suspendedUntil: timestamp("suspended_until"),
-  profileVisibility: text("profile_visibility")
-    .$type<"public" | "followers">()
-    .default("public")
-    .notNull(),
-  allowFollowRequests: boolean("allow_follow_requests").default(true).notNull(),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
