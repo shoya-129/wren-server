@@ -19,6 +19,35 @@ import {
 export class JwtAuthGuard implements CanActivate {
   constructor(private jwtService: JwtService) {}
 
+  private normalizeAccountState(
+    user?: Partial<{
+      isAdmin: boolean | null;
+      accountStatus: "active" | "suspended" | "banned" | null;
+      suspendedUntil: Date | null;
+    }> | null,
+  ) {
+    return {
+      isAdmin: user?.isAdmin ?? false,
+      accountStatus: user?.accountStatus ?? "active",
+      suspendedUntil: user?.suspendedUntil ?? null,
+    };
+  }
+
+  private isMissingUserMetaColumnError(error: unknown) {
+    const message =
+      error instanceof Error
+        ? error.message
+        : typeof error === "string"
+          ? error
+          : "";
+
+    return (
+      message.includes("is_admin") ||
+      message.includes("account_status") ||
+      message.includes("suspended_until")
+    );
+  }
+
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
     const token = this.extractTokenFromHeader(request);
@@ -39,37 +68,59 @@ export class JwtAuthGuard implements CanActivate {
         .select({
           uid: users.uid,
           username: users.username,
-          isAdmin: users.isAdmin,
-          accountStatus: users.accountStatus,
-          suspendedUntil: users.suspendedUntil,
         })
         .from(users)
         .where(eq(users.uid, payload.sub));
+
+      let accountState = this.normalizeAccountState();
+
+      try {
+        const [accountUser] = await db
+          .select({
+            isAdmin: users.isAdmin,
+            accountStatus: users.accountStatus,
+            suspendedUntil: users.suspendedUntil,
+          })
+          .from(users)
+          .where(eq(users.uid, payload.sub));
+
+        accountState = this.normalizeAccountState(accountUser);
+      } catch (error) {
+        if (!this.isMissingUserMetaColumnError(error)) {
+          throw error;
+        }
+      }
 
       if (!user) {
         throw new UnauthorizedException("User not found");
       }
 
-      if (user.accountStatus === "banned") {
+      if (accountState.accountStatus === "banned") {
         throw new ForbiddenException("Account is banned");
       }
 
-      if (user.accountStatus === "suspended") {
+      if (accountState.accountStatus === "suspended") {
         const now = new Date();
 
-        if (user.suspendedUntil && user.suspendedUntil <= now) {
-          await db
-            .update(users)
-            .set({
-              accountStatus: "active",
-              suspendedUntil: null,
-              updatedAt: now,
-            })
-            .where(eq(users.uid, user.uid));
+        if (accountState.suspendedUntil && accountState.suspendedUntil <= now) {
+          try {
+            await db
+              .update(users)
+              .set({
+                accountStatus: "active",
+                suspendedUntil: null,
+                updatedAt: now,
+              })
+              .where(eq(users.uid, user.uid));
+          } catch (error) {
+            if (!this.isMissingUserMetaColumnError(error)) {
+              throw error;
+            }
+          }
         } else {
           throw new ForbiddenException(
-            user.suspendedUntil
-              ? `Account is suspended until ${user.suspendedUntil.toISOString()}`
+            accountState.suspendedUntil
+              ? `Account is suspended until ${accountState.suspendedUntil.toISOString()}`
               : "Account is suspended",
           );
         }
@@ -78,7 +129,7 @@ export class JwtAuthGuard implements CanActivate {
       request.user = {
         username: user.username,
         sub: user.uid,
-        isAdmin: user.isAdmin,
+        isAdmin: accountState.isAdmin,
       };
     } catch (error) {
       if (

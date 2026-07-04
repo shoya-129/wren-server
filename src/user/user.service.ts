@@ -105,14 +105,18 @@ type UserRecord = Pick<
   | "encryptedFeedKey"
   | "salt"
   | "verified"
-  | "isAdmin"
-  | "accountStatus"
-  | "suspendedUntil"
   | "createdAt"
   | "updatedAt"
 > &
   Partial<
-    Pick<typeof users.$inferSelect, "profileVisibility" | "allowFollowRequests">
+    Pick<
+      typeof users.$inferSelect,
+      | "isAdmin"
+      | "accountStatus"
+      | "suspendedUntil"
+      | "profileVisibility"
+      | "allowFollowRequests"
+    >
   >;
 
 @Injectable()
@@ -120,7 +124,10 @@ export class UserService {
   constructor(private readonly cacheService: CacheService) {}
 
   async createUser(registerUserDto: RegisterDto) {
-    const newUser = await db.insert(users).values(registerUserDto).returning();
+    const newUser = await db
+      .insert(users)
+      .values(registerUserDto)
+      .returning(this.buildUserSelection());
 
     return newUser;
   }
@@ -139,9 +146,6 @@ export class UserService {
       encryptedFeedKey: users.encryptedFeedKey,
       salt: users.salt,
       verified: users.verified,
-      isAdmin: users.isAdmin,
-      accountStatus: users.accountStatus,
-      suspendedUntil: users.suspendedUntil,
       createdAt: users.createdAt,
       updatedAt: users.updatedAt,
     };
@@ -156,6 +160,24 @@ export class UserService {
           ? "followers"
           : "public",
       allowFollowRequests: privacySettings?.allowFollowRequests !== false,
+    };
+  }
+
+  private normalizeModerationState(
+    user?: Partial<
+      Pick<
+        typeof users.$inferSelect,
+        "isAdmin" | "accountStatus" | "suspendedUntil"
+      >
+    > | null,
+  ) {
+    return {
+      isAdmin: user?.isAdmin ?? false,
+      accountStatus: (user?.accountStatus ?? "active") as
+        | "active"
+        | "suspended"
+        | "banned",
+      suspendedUntil: user?.suspendedUntil ?? null,
     };
   }
 
@@ -186,8 +208,9 @@ export class UserService {
 
   private sanitizeUser(user: UserRecord, includeAdmin = false) {
     const privacySettings = this.normalizePrivacySettings(user);
-    const { password, isAdmin, ...rest } = user;
-    if (password || isAdmin) {
+    const moderationState = this.normalizeModerationState(user);
+    const { password, isAdmin, accountStatus, suspendedUntil, ...rest } = user;
+    if (password || isAdmin || accountStatus || suspendedUntil) {
       // Noop to satisfy unused variable rule
     }
 
@@ -195,18 +218,21 @@ export class UserService {
       return {
         ...rest,
         ...privacySettings,
-        isAdmin,
+        ...moderationState,
       };
     }
 
     return {
       ...rest,
       ...privacySettings,
+      accountStatus: moderationState.accountStatus,
+      suspendedUntil: moderationState.suspendedUntil,
     };
   }
 
   private toPublicUserSummary(user: UserRecord): PublicUserSummary {
     const privacySettings = this.normalizePrivacySettings(user);
+    const moderationState = this.normalizeModerationState(user);
 
     return {
       uid: user.uid,
@@ -216,7 +242,7 @@ export class UserService {
       bio: user.bio,
       publicKey: user.publicKey,
       verified: user.verified ?? false,
-      accountStatus: user.accountStatus,
+      accountStatus: moderationState.accountStatus,
       profileVisibility: privacySettings.profileVisibility,
       allowFollowRequests: privacySettings.allowFollowRequests,
       createdAt: user.createdAt ?? null,
