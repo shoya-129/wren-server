@@ -91,6 +91,30 @@ export interface PaginatedResponse<T> {
   pagination: PaginationMeta;
 }
 
+type UserRecord = Pick<
+  typeof users.$inferSelect,
+  | "uid"
+  | "username"
+  | "email"
+  | "name"
+  | "avatar"
+  | "bio"
+  | "password"
+  | "publicKey"
+  | "encryptedPrivateKey"
+  | "encryptedFeedKey"
+  | "salt"
+  | "verified"
+  | "isAdmin"
+  | "accountStatus"
+  | "suspendedUntil"
+  | "createdAt"
+  | "updatedAt"
+> &
+  Partial<
+    Pick<typeof users.$inferSelect, "profileVisibility" | "allowFollowRequests">
+  >;
+
 @Injectable()
 export class UserService {
   constructor(private readonly cacheService: CacheService) {}
@@ -101,16 +125,67 @@ export class UserService {
     return newUser;
   }
 
-  private async findUserByIdentifier(identifier: string) {
+  private buildUserSelection() {
+    return {
+      uid: users.uid,
+      username: users.username,
+      email: users.email,
+      name: users.name,
+      avatar: users.avatar,
+      bio: users.bio,
+      password: users.password,
+      publicKey: users.publicKey,
+      encryptedPrivateKey: users.encryptedPrivateKey,
+      encryptedFeedKey: users.encryptedFeedKey,
+      salt: users.salt,
+      verified: users.verified,
+      isAdmin: users.isAdmin,
+      accountStatus: users.accountStatus,
+      suspendedUntil: users.suspendedUntil,
+      createdAt: users.createdAt,
+      updatedAt: users.updatedAt,
+    };
+  }
+
+  private normalizePrivacySettings(
+    privacySettings?: Partial<UserPrivacySettings> | null,
+  ): UserPrivacySettings {
+    return {
+      profileVisibility:
+        privacySettings?.profileVisibility === "followers"
+          ? "followers"
+          : "public",
+      allowFollowRequests: privacySettings?.allowFollowRequests !== false,
+    };
+  }
+
+  private isMissingPrivacyColumnError(error: unknown) {
+    const message =
+      error instanceof Error
+        ? error.message
+        : typeof error === "string"
+          ? error
+          : "";
+
+    return (
+      message.includes("profile_visibility") ||
+      message.includes("allow_follow_requests")
+    );
+  }
+
+  private async findUserByIdentifier(
+    identifier: string,
+  ): Promise<UserRecord | null> {
     const [user] = await db
-      .select()
+      .select(this.buildUserSelection())
       .from(users)
       .where(or(eq(users.uid, identifier), eq(users.username, identifier)));
 
     return user ?? null;
   }
 
-  private sanitizeUser(user: typeof users.$inferSelect, includeAdmin = false) {
+  private sanitizeUser(user: UserRecord, includeAdmin = false) {
+    const privacySettings = this.normalizePrivacySettings(user);
     const { password, isAdmin, ...rest } = user;
     if (password || isAdmin) {
       // Noop to satisfy unused variable rule
@@ -119,16 +194,20 @@ export class UserService {
     if (includeAdmin) {
       return {
         ...rest,
+        ...privacySettings,
         isAdmin,
       };
     }
 
-    return rest;
+    return {
+      ...rest,
+      ...privacySettings,
+    };
   }
 
-  private toPublicUserSummary(
-    user: typeof users.$inferSelect,
-  ): PublicUserSummary {
+  private toPublicUserSummary(user: UserRecord): PublicUserSummary {
+    const privacySettings = this.normalizePrivacySettings(user);
+
     return {
       uid: user.uid,
       username: user.username,
@@ -138,11 +217,45 @@ export class UserService {
       publicKey: user.publicKey,
       verified: user.verified ?? false,
       accountStatus: user.accountStatus,
-      profileVisibility: user.profileVisibility,
-      allowFollowRequests: user.allowFollowRequests,
+      profileVisibility: privacySettings.profileVisibility,
+      allowFollowRequests: privacySettings.allowFollowRequests,
       createdAt: user.createdAt ?? null,
       updatedAt: user.updatedAt ?? null,
     };
+  }
+
+  private readonly profileHeadCacheTtlMs = 15000;
+
+  private buildUserCacheKey(uid: string, section: string) {
+    return `user:${uid}:${section}`;
+  }
+
+  private async getCachedUserSection<T>(
+    uid: string,
+    section: string,
+    loader: () => Promise<T>,
+    ttlMs = this.profileHeadCacheTtlMs,
+  ): Promise<T> {
+    const cacheKey = this.buildUserCacheKey(uid, section);
+    const cachedValue = this.cacheService.get<T>(cacheKey);
+
+    if (cachedValue) {
+      return cachedValue;
+    }
+
+    const loadedValue = await loader();
+    this.cacheService.set(cacheKey, loadedValue, ttlMs);
+    return loadedValue;
+  }
+
+  private invalidateUserProfileCaches(
+    ...uids: Array<string | null | undefined>
+  ) {
+    const uniqueUserIds = Array.from(new Set(uids.filter(Boolean)));
+
+    for (const uid of uniqueUserIds) {
+      this.cacheService.deletePattern(`user:${uid}:`);
+    }
   }
 
   private buildPagination(
@@ -163,113 +276,128 @@ export class UserService {
   }
 
   async getStatsSummary(uid: string): Promise<UserStatsSummary> {
-    const [followersResult, followingResult, postsResult] = await Promise.all([
-      db
-        .select({ count: sql<number>`count(*)::int` })
-        .from(follows)
-        .where(
-          and(eq(follows.followingId, uid), eq(follows.status, "accepted")),
-        ),
-      db
-        .select({ count: sql<number>`count(*)::int` })
-        .from(follows)
-        .where(
-          and(eq(follows.followerId, uid), eq(follows.status, "accepted")),
-        ),
-      db
-        .select({ count: sql<number>`count(*)::int` })
-        .from(posts)
-        .where(and(eq(posts.uid, uid), isNull(posts.deletedAt))),
-    ]);
+    return this.getCachedUserSection(uid, "stats", async () => {
+      const [followersResult, followingResult, postsResult] = await Promise.all(
+        [
+          db
+            .select({ count: sql<number>`count(*)::int` })
+            .from(follows)
+            .where(
+              and(eq(follows.followingId, uid), eq(follows.status, "accepted")),
+            ),
+          db
+            .select({ count: sql<number>`count(*)::int` })
+            .from(follows)
+            .where(
+              and(eq(follows.followerId, uid), eq(follows.status, "accepted")),
+            ),
+          db
+            .select({ count: sql<number>`count(*)::int` })
+            .from(posts)
+            .where(and(eq(posts.uid, uid), isNull(posts.deletedAt))),
+        ],
+      );
 
-    return {
-      followersCount: followersResult[0]?.count ?? 0,
-      followingCount: followingResult[0]?.count ?? 0,
-      postsCount: postsResult[0]?.count ?? 0,
-    };
+      return {
+        followersCount: followersResult[0]?.count ?? 0,
+        followingCount: followingResult[0]?.count ?? 0,
+        postsCount: postsResult[0]?.count ?? 0,
+      };
+    });
   }
 
   async getSecurityStats(uid: string): Promise<UserSecurityStats> {
-    const [feedKeySharedResult, pendingRequestsResult] = await Promise.all([
-      db
-        .select({ count: sql<number>`count(*)::int` })
-        .from(follows)
-        .where(
-          and(
-            eq(follows.followingId, uid),
-            eq(follows.status, "accepted"),
-            isNotNull(follows.encryptedFeedKey),
-          ),
-        ),
-      db
-        .select({ count: sql<number>`count(*)::int` })
-        .from(follows)
-        .where(
-          and(eq(follows.followingId, uid), eq(follows.status, "pending")),
-        ),
-    ]);
-
-    return {
-      feedKeySharedWithCount: feedKeySharedResult[0]?.count ?? 0,
-      pendingFollowRequestsCount: pendingRequestsResult[0]?.count ?? 0,
-    };
-  }
-
-  async getReachStats(uid: string): Promise<UserReachStats> {
-    const [audienceResult, publicPostsResult, followersOnlyPostsResult] =
-      await Promise.all([
+    return this.getCachedUserSection(uid, "security", async () => {
+      const [feedKeySharedResult, pendingRequestsResult] = await Promise.all([
         db
           .select({ count: sql<number>`count(*)::int` })
           .from(follows)
           .where(
-            and(eq(follows.followingId, uid), eq(follows.status, "accepted")),
-          ),
-        db
-          .select({ count: sql<number>`count(*)::int` })
-          .from(posts)
-          .where(
             and(
-              eq(posts.uid, uid),
-              eq(posts.visibility, "public"),
-              isNull(posts.deletedAt),
+              eq(follows.followingId, uid),
+              eq(follows.status, "accepted"),
+              isNotNull(follows.encryptedFeedKey),
             ),
           ),
         db
           .select({ count: sql<number>`count(*)::int` })
-          .from(posts)
+          .from(follows)
           .where(
-            and(
-              eq(posts.uid, uid),
-              eq(posts.visibility, "followers"),
-              isNull(posts.deletedAt),
-            ),
+            and(eq(follows.followingId, uid), eq(follows.status, "pending")),
           ),
       ]);
 
-    return {
-      potentialAudienceCount: audienceResult[0]?.count ?? 0,
-      publicPostsCount: publicPostsResult[0]?.count ?? 0,
-      followersOnlyPostsCount: followersOnlyPostsResult[0]?.count ?? 0,
-    };
+      return {
+        feedKeySharedWithCount: feedKeySharedResult[0]?.count ?? 0,
+        pendingFollowRequestsCount: pendingRequestsResult[0]?.count ?? 0,
+      };
+    });
+  }
+
+  async getReachStats(uid: string): Promise<UserReachStats> {
+    return this.getCachedUserSection(uid, "reach", async () => {
+      const [audienceResult, publicPostsResult, followersOnlyPostsResult] =
+        await Promise.all([
+          db
+            .select({ count: sql<number>`count(*)::int` })
+            .from(follows)
+            .where(
+              and(eq(follows.followingId, uid), eq(follows.status, "accepted")),
+            ),
+          db
+            .select({ count: sql<number>`count(*)::int` })
+            .from(posts)
+            .where(
+              and(
+                eq(posts.uid, uid),
+                eq(posts.visibility, "public"),
+                isNull(posts.deletedAt),
+              ),
+            ),
+          db
+            .select({ count: sql<number>`count(*)::int` })
+            .from(posts)
+            .where(
+              and(
+                eq(posts.uid, uid),
+                eq(posts.visibility, "followers"),
+                isNull(posts.deletedAt),
+              ),
+            ),
+        ]);
+
+      return {
+        potentialAudienceCount: audienceResult[0]?.count ?? 0,
+        publicPostsCount: publicPostsResult[0]?.count ?? 0,
+        followersOnlyPostsCount: followersOnlyPostsResult[0]?.count ?? 0,
+      };
+    });
   }
 
   async getPrivacySettings(uid: string): Promise<UserPrivacySettings> {
-    const [user] = await db
-      .select({
-        profileVisibility: users.profileVisibility,
-        allowFollowRequests: users.allowFollowRequests,
-      })
-      .from(users)
-      .where(eq(users.uid, uid));
+    return this.getCachedUserSection(uid, "privacy", async () => {
+      try {
+        const [user] = await db
+          .select({
+            profileVisibility: users.profileVisibility,
+            allowFollowRequests: users.allowFollowRequests,
+          })
+          .from(users)
+          .where(eq(users.uid, uid));
 
-    if (!user) {
-      throw new NotFoundException("User not found");
-    }
+        if (!user) {
+          throw new NotFoundException("User not found");
+        }
 
-    return {
-      profileVisibility: user.profileVisibility,
-      allowFollowRequests: user.allowFollowRequests,
-    };
+        return this.normalizePrivacySettings(user);
+      } catch (error) {
+        if (this.isMissingPrivacyColumnError(error)) {
+          return this.normalizePrivacySettings();
+        }
+
+        throw error;
+      }
+    });
   }
 
   private async canViewerSeeProfilePosts(
@@ -376,17 +504,17 @@ export class UserService {
 
     const profileUserId = user.uid;
 
-    const [stats, reachStats, privacySettings, canViewPosts] =
-      await Promise.all([
-        this.getStatsSummary(profileUserId),
-        this.getReachStats(profileUserId),
-        this.getPrivacySettings(profileUserId),
-        this.canViewerSeeProfilePosts(
-          profileUserId,
-          viewerId,
-          user.profileVisibility,
-        ),
-      ]);
+    const [stats, reachStats, privacySettings] = await Promise.all([
+      this.getStatsSummary(profileUserId),
+      this.getReachStats(profileUserId),
+      this.getPrivacySettings(profileUserId),
+    ]);
+
+    const canViewPosts = await this.canViewerSeeProfilePosts(
+      profileUserId,
+      viewerId,
+      privacySettings.profileVisibility,
+    );
 
     const profilePosts = canViewPosts
       ? await this.getProfilePosts(
@@ -418,7 +546,7 @@ export class UserService {
   }
 
   async getMyStats(uid: string) {
-    const [user] = await db.select().from(users).where(eq(users.uid, uid));
+    const user = await this.findUserByIdentifier(uid);
 
     if (!user) {
       throw new NotFoundException("User not found");
@@ -434,11 +562,8 @@ export class UserService {
 
     return {
       user: {
-        uid: user.uid,
-        username: user.username,
-        isAdmin: user.isAdmin,
-        accountStatus: user.accountStatus,
-        suspendedUntil: user.suspendedUntil,
+        ...this.sanitizeUser(user, true),
+        ...privacySettings,
       },
       stats,
       securityStats,
@@ -464,9 +589,8 @@ export class UserService {
 
     return {
       user: {
-        uid: user.uid,
-        username: user.username,
-        accountStatus: user.accountStatus,
+        ...this.toPublicUserSummary(user),
+        ...privacySettings,
       },
       stats,
       reachStats,
@@ -484,34 +608,74 @@ export class UserService {
       );
     }
 
-    const [existingUser] = await db
-      .select()
-      .from(users)
-      .where(eq(users.uid, uid));
+    let existingUser: UserPrivacySettings | null = null;
+    let missingPrivacyColumns = false;
+
+    try {
+      const [user] = await db
+        .select({
+          profileVisibility: users.profileVisibility,
+          allowFollowRequests: users.allowFollowRequests,
+        })
+        .from(users)
+        .where(eq(users.uid, uid));
+
+      existingUser = user ?? null;
+    } catch (error) {
+      if (!this.isMissingPrivacyColumnError(error)) {
+        throw error;
+      }
+
+      missingPrivacyColumns = true;
+    }
+
+    if (missingPrivacyColumns) {
+      throw new BadRequestException(
+        "Privacy columns are not available in the database yet. Apply the latest migration first.",
+      );
+    }
 
     if (!existingUser) {
       throw new NotFoundException("User not found");
     }
 
-    const [updatedUser] = await db
-      .update(users)
-      .set({
-        profileVisibility:
-          dto.profileVisibility ?? existingUser.profileVisibility,
-        allowFollowRequests:
-          dto.allowFollowRequests ?? existingUser.allowFollowRequests,
-        updatedAt: new Date(),
-      })
-      .where(eq(users.uid, uid))
-      .returning({
-        profileVisibility: users.profileVisibility,
-        allowFollowRequests: users.allowFollowRequests,
-      });
+    try {
+      const normalizedExistingSettings =
+        this.normalizePrivacySettings(existingUser);
+      const [updatedUser] = await db
+        .update(users)
+        .set({
+          profileVisibility:
+            dto.profileVisibility ??
+            normalizedExistingSettings.profileVisibility,
+          allowFollowRequests:
+            dto.allowFollowRequests ??
+            normalizedExistingSettings.allowFollowRequests,
+          updatedAt: new Date(),
+        })
+        .where(eq(users.uid, uid))
+        .returning({
+          profileVisibility: users.profileVisibility,
+          allowFollowRequests: users.allowFollowRequests,
+        });
 
-    return {
-      message: "Privacy settings updated successfully",
-      privacySettings: updatedUser,
-    };
+      const normalizedPrivacySettings =
+        this.normalizePrivacySettings(updatedUser);
+      this.invalidateUserProfileCaches(uid);
+
+      return {
+        message: "Privacy settings updated successfully",
+        privacySettings: normalizedPrivacySettings,
+      };
+    } catch (error) {
+      if (this.isMissingPrivacyColumnError(error)) {
+        throw new BadRequestException(
+          "Privacy columns are not available in the database yet. Apply the latest migration first.",
+        );
+      }
+
+      throw error;
+    }
   }
 
   async getAllUsers(
@@ -523,7 +687,7 @@ export class UserService {
     const [totalResult, allUsers] = await Promise.all([
       db.select({ count: sql<number>`count(*)::int` }).from(users),
       db
-        .select()
+        .select(this.buildUserSelection())
         .from(users)
         .orderBy(desc(users.createdAt))
         .limit(limit)
@@ -561,7 +725,7 @@ export class UserService {
         ),
       db
         .select({
-          user: users,
+          user: this.buildUserSelection(),
           followedAt: follows.acceptedAt,
           requestedAt: follows.createdAt,
         })
@@ -609,7 +773,7 @@ export class UserService {
         ),
       db
         .select({
-          user: users,
+          user: this.buildUserSelection(),
           followedAt: follows.acceptedAt,
           requestedAt: follows.createdAt,
         })
@@ -645,7 +809,9 @@ export class UserService {
       throw new BadRequestException("You cannot follow yourself");
     }
 
-    if (!targetUser.allowFollowRequests) {
+    const targetPrivacySettings = await this.getPrivacySettings(followingId);
+
+    if (!targetPrivacySettings.allowFollowRequests) {
       throw new ForbiddenException(
         "This user is not accepting follow requests",
       );
@@ -689,6 +855,7 @@ export class UserService {
         .returning();
 
       this.cacheService.deletePattern(`feed:${followerId}:`);
+      this.invalidateUserProfileCaches(followerId, followingId);
 
       return {
         message: "Follow request re-sent successfully",
@@ -706,6 +873,7 @@ export class UserService {
       .returning();
 
     this.cacheService.deletePattern(`feed:${followerId}:`);
+    this.invalidateUserProfileCaches(followerId, followingId);
 
     return {
       message: "Follow request sent successfully",
@@ -771,6 +939,7 @@ export class UserService {
       .returning();
 
     this.cacheService.deletePattern(`feed:${followerId}:`);
+    this.invalidateUserProfileCaches(followerId, followingId);
 
     return {
       message: "Follow request accepted",
@@ -810,6 +979,7 @@ export class UserService {
       .returning();
 
     this.cacheService.deletePattern(`feed:${followerId}:`);
+    this.invalidateUserProfileCaches(followerId, followingId);
 
     return {
       message: "Follow request rejected",
@@ -849,6 +1019,7 @@ export class UserService {
       .returning();
 
     this.cacheService.deletePattern(`feed:${followerId}:`);
+    this.invalidateUserProfileCaches(followerId, followingId);
 
     return {
       message: "Access revoked successfully",
@@ -889,6 +1060,7 @@ export class UserService {
       );
 
     this.cacheService.deletePattern(`feed:${followerId}:`);
+    this.invalidateUserProfileCaches(followerId, followingId);
 
     return {
       message: "Unfollowed successfully",
@@ -901,7 +1073,7 @@ export class UserService {
     dto: UpdateAccountStatusDto,
   ) {
     const [targetUser] = await db
-      .select()
+      .select(this.buildUserSelection())
       .from(users)
       .where(eq(users.uid, targetUserId));
 
@@ -949,6 +1121,7 @@ export class UserService {
       });
 
     this.cacheService.deletePattern("feed:");
+    this.invalidateUserProfileCaches(targetUserId);
 
     return {
       message: "Account status updated successfully",
@@ -957,7 +1130,10 @@ export class UserService {
   }
 
   async deleteAccount(uid: string) {
-    const [user] = await db.select().from(users).where(eq(users.uid, uid));
+    const [user] = await db
+      .select(this.buildUserSelection())
+      .from(users)
+      .where(eq(users.uid, uid));
 
     if (!user) {
       throw new NotFoundException("User not found");
@@ -965,6 +1141,7 @@ export class UserService {
 
     await db.delete(users).where(eq(users.uid, uid));
     this.cacheService.deletePattern("feed:");
+    this.cacheService.deletePattern("user:");
 
     return {
       message: "Account deleted successfully",

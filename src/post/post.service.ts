@@ -57,6 +57,16 @@ export interface FeedPost {
 export class PostService {
   constructor(private readonly cacheService: CacheService) {}
 
+  private invalidateUserProfileCaches(
+    ...uids: Array<string | null | undefined>
+  ) {
+    const uniqueUserIds = Array.from(new Set(uids.filter(Boolean)));
+
+    for (const uid of uniqueUserIds) {
+      this.cacheService.deletePattern(`user:${uid}:`);
+    }
+  }
+
   async createPost(uid: string, dto: CreatePostDto) {
     const [newPost] = await db
       .insert(posts)
@@ -71,6 +81,7 @@ export class PostService {
       .returning();
 
     this.cacheService.deletePattern("feed:");
+    this.invalidateUserProfileCaches(uid);
 
     return newPost;
   }
@@ -444,6 +455,7 @@ export class PostService {
       .returning();
 
     this.cacheService.deletePattern("feed:");
+    this.invalidateUserProfileCaches(uid);
 
     return {
       message: "Post deleted successfully",
@@ -576,6 +588,7 @@ export class PostService {
       .where(eq(users.uid, uid));
 
     this.cacheService.deletePattern("feed:");
+    this.invalidateUserProfileCaches(uid);
 
     return {
       ...newComment,
