@@ -13,7 +13,6 @@ import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { AdminGuard } from "../auth/guards/admin.guard";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { UpdateAccountStatusDto } from "./dto/update-account-status.dto";
-import { UpdatePrivacyDto } from "./dto/update-privacy.dto";
 import { UserService } from "./user.service";
 
 @Controller("user")
