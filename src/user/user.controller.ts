@@ -43,14 +43,6 @@ export class UserController {
     return this.userService.getUserStats(uid);
   }
 
-  @Patch("privacy")
-  updatePrivacy(
-    @CurrentUser("sub") uid: string,
-    @Body() updatePrivacyDto: UpdatePrivacyDto,
-  ) {
-    return this.userService.updatePrivacy(uid, updatePrivacyDto);
-  }
-
   @Get("all")
   getAllUsers(@Query("page") page?: string, @Query("limit") limit?: string) {
     const { pageNum, limitNum } = this.parsePagination(page, limit);
