@@ -52,11 +52,13 @@ export class AuthService {
   }
 
   private normalizeAccountState(
-    user?: Partial<{
-      isAdmin: boolean | null;
-      accountStatus: "active" | "suspended" | "banned" | null;
-      suspendedUntil: Date | null;
-    }> | null,
+    user?:
+      | Partial<{
+        isAdmin: boolean | null;
+        accountStatus: "active" | "suspended" | "banned" | null;
+        suspendedUntil: Date | null;
+      }>
+      | null,
   ) {
     return {
       isAdmin: user?.isAdmin ?? false,
@@ -66,12 +68,11 @@ export class AuthService {
   }
 
   private isMissingUserMetaColumnError(error: unknown) {
-    const message =
-      error instanceof Error
-        ? error.message
-        : typeof error === "string"
-          ? error
-          : "";
+    const message = error instanceof Error
+      ? error.message
+      : typeof error === "string"
+      ? error
+      : "";
 
     return (
       message.includes("is_admin") ||
@@ -148,22 +149,18 @@ export class AuthService {
       password: hash,
     });
 
-    const jwtPayload = {
-      username: createdUser.username,
-      sub: createdUser.uid,
-    };
+    const jwtPayload = { username: createdUser.username, sub: createdUser.uid };
     const accessToken = await this.jwtService.signAsync(jwtPayload, {
       expiresIn: "7d",
       secret: process.env.JWT_SECRET,
     });
 
-    const [stats, securityStats, reachStats, accountState] =
-      await Promise.all([
-        this.userService.getStatsSummary(createdUser.uid),
-        this.userService.getSecurityStats(createdUser.uid),
-        this.userService.getReachStats(createdUser.uid),
-        this.getAccountState(createdUser.uid),
-      ]);
+    const [stats, securityStats, reachStats, accountState] = await Promise.all([
+      this.userService.getStatsSummary(createdUser.uid),
+      this.userService.getSecurityStats(createdUser.uid),
+      this.userService.getReachStats(createdUser.uid),
+      this.getAccountState(createdUser.uid),
+    ]);
 
     const { password } = createdUser;
     if (password) {
@@ -263,12 +260,11 @@ export class AuthService {
       secret: process.env.JWT_SECRET,
     });
 
-    const [stats, securityStats, reachStats] =
-      await Promise.all([
-        this.userService.getStatsSummary(user.uid),
-        this.userService.getSecurityStats(user.uid),
-        this.userService.getReachStats(user.uid),
-      ]);
+    const [stats, securityStats, reachStats] = await Promise.all([
+      this.userService.getStatsSummary(user.uid),
+      this.userService.getSecurityStats(user.uid),
+      this.userService.getReachStats(user.uid),
+    ]);
 
     const { password } = user;
     if (password) {
