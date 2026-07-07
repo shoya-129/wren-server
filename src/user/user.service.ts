@@ -3,8 +3,10 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  OnModuleInit,
 } from "@nestjs/common";
 import { and, desc, eq, isNotNull, isNull, or, sql } from "drizzle-orm";
+import { BehaviorSubject, Observable } from "rxjs";
 import { RegisterDto } from "../auth/dto/register.user.dto";
 import { CacheService } from "../cache/cache.service";
 import { db } from "../db";
@@ -108,14 +110,54 @@ type UserRecord = Pick<
   >;
 
 @Injectable()
-export class UserService {
+export class UserService implements OnModuleInit {
+  private readonly userCountSubject = new BehaviorSubject<number>(0);
+
   constructor(private readonly cacheService: CacheService) {}
+
+  async onModuleInit() {
+    try {
+      const count = await this.getCount();
+      this.userCountSubject.next(count);
+    } catch (error) {
+      console.error("Failed to initialize user count:", error);
+    }
+  }
+
+  async getCount(): Promise<number> {
+    try {
+      const [result] = await db
+        .select({ count: sql<number>`count(*)::int` })
+        .from(users);
+      return result?.count ?? 0;
+    } catch (error) {
+      console.error("Failed to get user count from DB:", error);
+      return 0;
+    }
+  }
+
+  getUserCountStream(): Observable<number> {
+    return this.userCountSubject.asObservable();
+  }
+
+  async triggerUserCountUpdate() {
+    try {
+      const count = await this.getCount();
+      this.userCountSubject.next(count);
+    } catch (error) {
+      console.error("Failed to update user count:", error);
+    }
+  }
 
   async createUser(registerUserDto: RegisterDto) {
     const newUser = await db
       .insert(users)
       .values(registerUserDto)
       .returning(this.buildUserSelection());
+
+    this.triggerUserCountUpdate().catch((error) => {
+      console.error("Failed to trigger user count update after registration:", error);
+    });
 
     return newUser;
   }
@@ -1011,6 +1053,10 @@ export class UserService {
     await db.delete(users).where(eq(users.uid, uid));
     this.cacheService.deletePattern("feed:");
     this.cacheService.deletePattern("user:");
+
+    this.triggerUserCountUpdate().catch((error) => {
+      console.error("Failed to trigger user count update after deletion:", error);
+    });
 
     return {
       message: "Account deleted successfully",
