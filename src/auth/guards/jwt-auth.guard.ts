@@ -64,7 +64,7 @@ export class JwtAuthGuard implements CanActivate {
           secret: process.env.JWT_SECRET,
         },
       );
-    } catch (jwtError) {
+    } catch {
       throw new UnauthorizedException("Invalid or expired token");
     }
 

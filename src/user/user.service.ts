@@ -150,10 +150,7 @@ export class UserService {
   ) {
     return {
       isAdmin: user?.isAdmin ?? false,
-      accountStatus: (user?.accountStatus ?? "active") as
-        | "active"
-        | "suspended"
-        | "banned",
+      accountStatus: (user?.accountStatus ?? "active"),
       suspendedUntil: user?.suspendedUntil ?? null,
     };
   }
