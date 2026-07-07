@@ -76,7 +76,7 @@ export class PostService {
             {
               resource_type: "raw",
               folder: "wren_encrypted",
-              public_id: `encrypted_${Date.now()}_${Math.random().toString(36).substring(7)}.enc`,
+              public_id: `${Date.now()}_${Math.random().toString(36).substring(7)}.wren`,
             },
             (error: unknown, res: unknown) => {
               if (error) {

@@ -56,14 +56,19 @@ export class JwtAuthGuard implements CanActivate {
       throw new UnauthorizedException("Token not found or invalid format");
     }
 
+    let payload: AuthenticatedUser;
     try {
-      const payload = await this.jwtService.verifyAsync<AuthenticatedUser>(
+      payload = await this.jwtService.verifyAsync<AuthenticatedUser>(
         token,
         {
           secret: process.env.JWT_SECRET,
         },
       );
+    } catch (jwtError) {
+      throw new UnauthorizedException("Invalid or expired token");
+    }
 
+    try {
       const [user] = await db
         .select({
           uid: users.uid,
@@ -71,6 +76,10 @@ export class JwtAuthGuard implements CanActivate {
         })
         .from(users)
         .where(eq(users.uid, payload.sub));
+
+      if (!user) {
+        throw new UnauthorizedException("User not found");
+      }
 
       let accountState = this.normalizeAccountState();
 
@@ -82,17 +91,13 @@ export class JwtAuthGuard implements CanActivate {
             suspendedUntil: users.suspendedUntil,
           })
           .from(users)
-          .where(eq(users.uid, payload.sub));
+          .where(eq(users.uid, user.uid));
 
         accountState = this.normalizeAccountState(accountUser);
       } catch (error) {
         if (!this.isMissingUserMetaColumnError(error)) {
           throw error;
         }
-      }
-
-      if (!user) {
-        throw new UnauthorizedException("User not found");
       }
 
       if (accountState.accountStatus === "banned") {
@@ -139,7 +144,7 @@ export class JwtAuthGuard implements CanActivate {
         throw error;
       }
 
-      throw new UnauthorizedException("Invalid or expired token");
+      throw error;
     }
 
     return true;
