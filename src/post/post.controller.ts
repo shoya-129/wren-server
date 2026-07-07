@@ -7,7 +7,10 @@ import {
   Post,
   Query,
   UseGuards,
+  UseInterceptors,
+  UploadedFile,
 } from "@nestjs/common";
+import { FileInterceptor } from "@nestjs/platform-express";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { CreateCommentDto } from "./dto/create-comment.dto";
@@ -19,6 +22,12 @@ import { PostService } from "./post.service";
 @UseGuards(JwtAuthGuard)
 export class PostController {
   constructor(private readonly postService: PostService) {}
+
+  @Post("upload")
+  @UseInterceptors(FileInterceptor("file"))
+  uploadFile(@UploadedFile() file: any) {
+    return this.postService.uploadMedia(file);
+  }
 
   @Post()
   create(

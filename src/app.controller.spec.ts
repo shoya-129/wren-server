@@ -15,8 +15,14 @@ describe('AppController', () => {
   });
 
   describe('root', () => {
-    it('should return "Hello World!"', () => {
-      expect(appController.getHello()).toBe('Hello World!');
+    it('should send landing page HTML', () => {
+      const res = {
+        setHeader: jest.fn(),
+        send: jest.fn(),
+      } as any;
+      appController.getLanding(res);
+      expect(res.send).toHaveBeenCalled();
+      expect(res.send.mock.calls[0][0]).toContain('<!DOCTYPE html>');
     });
   });
 });

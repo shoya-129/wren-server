@@ -4,6 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
+import { v2 as cloudinary } from "cloudinary";
 import {
   and,
   desc,
@@ -56,6 +57,54 @@ export interface FeedPost {
 @Injectable()
 export class PostService {
   constructor(private readonly cacheService: CacheService) {}
+
+  async uploadMedia(file: { buffer: Buffer }) {
+    if (!file || !file.buffer) {
+      throw new BadRequestException("No file uploaded");
+    }
+
+    cloudinary.config({
+      cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+      api_key: process.env.CLOUDINARY_API_KEY,
+      api_secret: process.env.CLOUDINARY_API_SECRET,
+    });
+
+    try {
+      const result = await new Promise<{ secure_url: string }>(
+        (resolve, reject) => {
+          const uploadStream = cloudinary.uploader.upload_stream(
+            {
+              resource_type: "raw",
+              folder: "wren_encrypted",
+              public_id: `encrypted_${Date.now()}_${Math.random().toString(36).substring(7)}.enc`,
+            },
+            (error: unknown, res: unknown) => {
+              if (error) {
+                const errMsg =
+                  error instanceof Error
+                    ? error.message
+                    : error && typeof error === "object" && "message" in error
+                    ? String((error as Record<string, unknown>).message)
+                    : JSON.stringify(error);
+                return reject(new Error(errMsg));
+              }
+              if (res && typeof res === "object" && "secure_url" in res) {
+                resolve(res as { secure_url: string });
+              } else {
+                reject(new Error("No response received from Cloudinary"));
+              }
+            }
+          );
+          uploadStream.end(file.buffer);
+        }
+      );
+
+      return { url: result.secure_url };
+    } catch (e) {
+      console.error("Cloudinary upload error:", e);
+      throw new BadRequestException("Failed to upload file to Cloudinary");
+    }
+  }
 
   private invalidateUserProfileCaches(
     ...uids: Array<string | null | undefined>
