@@ -39,7 +39,8 @@ export class PostController {
   }
 
   @Get("feed")
-  @Header("Cache-Control", "private, max-age=5, stale-while-revalidate=5")
+  @Header("Cache-Control", "public, max-age=5, stale-while-revalidate=5")
+  @Header("Vary", "Authorization")
   getFeed(
     @CurrentUser("sub") uid: string,
     @Query("page") page?: string,

@@ -44,13 +44,15 @@ export class UserController {
   }
 
   @Get("profile")
-  @Header("Cache-Control", "private, max-age=5, stale-while-revalidate=5")
+  @Header("Cache-Control", "public, max-age=5, stale-while-revalidate=5")
+  @Header("Vary", "Authorization")
   getOwnProfile(@CurrentUser("sub") uid: string) {
     return this.userService.getProfile(uid, uid);
   }
 
   @Get("profile/:id")
-  @Header("Cache-Control", "private, max-age=5, stale-while-revalidate=5")
+  @Header("Cache-Control", "public, max-age=5, stale-while-revalidate=5")
+  @Header("Vary", "Authorization")
   getUserProfile(
     @CurrentUser("sub") viewerId: string,
     @Param("id") profileUserId: string,
@@ -59,13 +61,15 @@ export class UserController {
   }
 
   @Get("stats")
-  @Header("Cache-Control", "private, max-age=5, stale-while-revalidate=5")
+  @Header("Cache-Control", "public, max-age=5, stale-while-revalidate=5")
+  @Header("Vary", "Authorization")
   getOwnStats(@CurrentUser("sub") uid: string) {
     return this.userService.getMyStats(uid);
   }
 
   @Get("stats/:id")
-  @Header("Cache-Control", "private, max-age=5, stale-while-revalidate=5")
+  @Header("Cache-Control", "public, max-age=5, stale-while-revalidate=5")
+  @Header("Vary", "Authorization")
   getUserStats(@Param("id") uid: string) {
     return this.userService.getUserStats(uid);
   }
