@@ -9,6 +9,7 @@ import {
   UseGuards,
   UseInterceptors,
   UploadedFile,
+  Header,
 } from "@nestjs/common";
 import { FileInterceptor } from "@nestjs/platform-express";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
@@ -38,6 +39,7 @@ export class PostController {
   }
 
   @Get("feed")
+  @Header("Cache-Control", "private, max-age=5, stale-while-revalidate=5")
   getFeed(
     @CurrentUser("sub") uid: string,
     @Query("page") page?: string,

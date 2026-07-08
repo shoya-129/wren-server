@@ -44,11 +44,13 @@ export class UserController {
   }
 
   @Get("profile")
+  @Header("Cache-Control", "private, max-age=5, stale-while-revalidate=5")
   getOwnProfile(@CurrentUser("sub") uid: string) {
     return this.userService.getProfile(uid, uid);
   }
 
   @Get("profile/:id")
+  @Header("Cache-Control", "private, max-age=5, stale-while-revalidate=5")
   getUserProfile(
     @CurrentUser("sub") viewerId: string,
     @Param("id") profileUserId: string,
@@ -57,19 +59,25 @@ export class UserController {
   }
 
   @Get("stats")
+  @Header("Cache-Control", "private, max-age=5, stale-while-revalidate=5")
   getOwnStats(@CurrentUser("sub") uid: string) {
     return this.userService.getMyStats(uid);
   }
 
   @Get("stats/:id")
+  @Header("Cache-Control", "private, max-age=5, stale-while-revalidate=5")
   getUserStats(@Param("id") uid: string) {
     return this.userService.getUserStats(uid);
   }
 
   @Get("all")
-  getAllUsers(@Query("page") page?: string, @Query("limit") limit?: string) {
+  getAllUsers(
+    @CurrentUser("sub") uid: string,
+    @Query("page") page?: string,
+    @Query("limit") limit?: string,
+  ) {
     const { pageNum, limitNum } = this.parsePagination(page, limit);
-    return this.userService.getAllUsers(pageNum, limitNum);
+    return this.userService.getAllUsers(uid, pageNum, limitNum);
   }
 
   @Get(":id/followers")

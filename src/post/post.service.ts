@@ -375,6 +375,7 @@ export class PostService {
         .where(and(eq(likes.postId, postId), eq(likes.uid, uid)));
 
       this.cacheService.deletePattern("feed:");
+      this.invalidateUserProfileCaches(post.uid);
       return { liked: false, message: "Unliked successfully" };
     }
 
@@ -385,6 +386,7 @@ export class PostService {
     await db.insert(likes).values({ postId, uid });
 
     this.cacheService.deletePattern("feed:");
+    this.invalidateUserProfileCaches(post.uid);
     return { liked: true, message: "Liked successfully" };
   }
 
@@ -408,6 +410,7 @@ export class PostService {
         .where(and(eq(dislikes.postId, postId), eq(dislikes.uid, uid)));
 
       this.cacheService.deletePattern("feed:");
+      this.invalidateUserProfileCaches(post.uid);
       return { disliked: false, message: "Removed dislike successfully" };
     }
 
@@ -418,6 +421,7 @@ export class PostService {
     await db.insert(dislikes).values({ postId, uid });
 
     this.cacheService.deletePattern("feed:");
+    this.invalidateUserProfileCaches(post.uid);
     return { disliked: true, message: "Disliked successfully" };
   }
 
@@ -441,12 +445,14 @@ export class PostService {
         .where(and(eq(reposts.postId, postId), eq(reposts.uid, uid)));
 
       this.cacheService.deletePattern("feed:");
+      this.invalidateUserProfileCaches(post.uid);
       return { reposted: false, message: "Unreposted successfully" };
     }
 
     await db.insert(reposts).values({ postId, uid });
 
     this.cacheService.deletePattern("feed:");
+    this.invalidateUserProfileCaches(post.uid);
     return { reposted: true, message: "Reposted successfully" };
   }
 
@@ -637,7 +643,7 @@ export class PostService {
       .where(eq(users.uid, uid));
 
     this.cacheService.deletePattern("feed:");
-    this.invalidateUserProfileCaches(uid);
+    this.invalidateUserProfileCaches(uid, post.uid);
 
     return {
       ...newComment,

@@ -5,7 +5,7 @@ import {
   NotFoundException,
   OnModuleInit,
 } from "@nestjs/common";
-import { and, desc, eq, isNotNull, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, isNotNull, isNull, or, sql, ne } from "drizzle-orm";
 import { BehaviorSubject, Observable } from "rxjs";
 import { RegisterDto } from "../auth/dto/register.user.dto";
 import { CacheService } from "../cache/cache.service";
@@ -512,11 +512,27 @@ export class UserService implements OnModuleInit {
     }
 
     const profileUserId = user.uid;
+    const cacheKey = `user:${profileUserId}:profile:${viewerId}`;
+    const cachedProfile = this.cacheService.get<any>(cacheKey);
+    if (cachedProfile) {
+      return cachedProfile;
+    }
 
-    const [stats, reachStats] = await Promise.all([
+    const [stats, reachStats, [followRelation]] = await Promise.all([
       this.getStatsSummary(profileUserId),
       this.getReachStats(profileUserId),
+      db
+        .select({ status: follows.status })
+        .from(follows)
+        .where(
+          and(
+            eq(follows.followerId, viewerId),
+            eq(follows.followingId, profileUserId),
+          ),
+        ),
     ]);
+
+    const followStatus = followRelation?.status ?? "none";
 
     const canViewPosts = await this.canViewerSeeProfilePosts(
       profileUserId,
@@ -532,26 +548,38 @@ export class UserService implements OnModuleInit {
       : [];
 
     const baseProfile = {
-      user: this.sanitizeUser(user, viewerId === profileUserId),
+      user: {
+        ...this.sanitizeUser(user, viewerId === profileUserId),
+        followStatus,
+      },
       stats,
       reachStats,
       canViewPosts,
       posts: profilePosts,
     };
 
+    let resultProfile;
     if (viewerId === profileUserId) {
       const securityStats = await this.getSecurityStats(profileUserId);
-
-      return {
+      resultProfile = {
         ...baseProfile,
         securityStats,
       };
+    } else {
+      resultProfile = baseProfile;
     }
 
-    return baseProfile;
+    this.cacheService.set(cacheKey, resultProfile, this.profileHeadCacheTtlMs);
+    return resultProfile;
   }
 
   async getMyStats(uid: string) {
+    const cacheKey = `user:${uid}:mystats`;
+    const cachedMyStats = this.cacheService.get<any>(cacheKey);
+    if (cachedMyStats) {
+      return cachedMyStats;
+    }
+
     const user = await this.findUserByIdentifier(uid);
 
     if (!user) {
@@ -564,7 +592,7 @@ export class UserService implements OnModuleInit {
       this.getReachStats(uid),
     ]);
 
-    return {
+    const result = {
       user: {
         ...this.sanitizeUser(user, true),
       },
@@ -572,6 +600,9 @@ export class UserService implements OnModuleInit {
       securityStats,
       reachStats,
     };
+
+    this.cacheService.set(cacheKey, result, this.profileHeadCacheTtlMs);
+    return result;
   }
 
   async getUserStats(identifier: string) {
@@ -582,32 +613,83 @@ export class UserService implements OnModuleInit {
     }
 
     const uid = user.uid;
+    const cacheKey = `user:${uid}:userstats`;
+    const cachedUserStats = this.cacheService.get<any>(cacheKey);
+    if (cachedUserStats) {
+      return cachedUserStats;
+    }
 
     const [stats, reachStats] = await Promise.all([
       this.getStatsSummary(uid),
       this.getReachStats(uid),
     ]);
 
-    return {
+    const result = {
       user: {
         ...this.toPublicUserSummary(user),
       },
       stats,
       reachStats,
     };
+
+    this.cacheService.set(cacheKey, result, this.profileHeadCacheTtlMs);
+    return result;
   }
 
   async getAllUsers(
+    viewerId: string,
     page = 1,
     limit = 20,
   ): Promise<PaginatedResponse<PublicUserSummary>> {
     const offset = (page - 1) * limit;
 
+    const baseConditions = and(
+      ne(users.uid, viewerId),
+      or(
+        isNull(follows.status),
+        and(ne(follows.status, "accepted"), ne(follows.status, "pending")),
+      ),
+    );
+
     const [totalResult, allUsers] = await Promise.all([
-      db.select({ count: sql<number>`count(*)::int` }).from(users),
       db
-        .select(this.buildUserSelection())
+        .select({ count: sql<number>`count(*)::int` })
         .from(users)
+        .leftJoin(
+          follows,
+          and(
+            eq(follows.followingId, users.uid),
+            eq(follows.followerId, viewerId),
+          ),
+        )
+        .where(baseConditions),
+      db
+        .select({
+          uid: users.uid,
+          username: users.username,
+          email: users.email,
+          name: users.name,
+          avatar: users.avatar,
+          bio: users.bio,
+          password: users.password,
+          publicKey: users.publicKey,
+          encryptedPrivateKey: users.encryptedPrivateKey,
+          encryptedFeedKey: users.encryptedFeedKey,
+          salt: users.salt,
+          verified: users.verified,
+          isAdmin: users.isAdmin,
+          createdAt: users.createdAt,
+          updatedAt: users.updatedAt,
+        })
+        .from(users)
+        .leftJoin(
+          follows,
+          and(
+            eq(follows.followingId, users.uid),
+            eq(follows.followerId, viewerId),
+          ),
+        )
+        .where(baseConditions)
         .orderBy(desc(users.createdAt))
         .limit(limit)
         .offset(offset),
@@ -616,7 +698,7 @@ export class UserService implements OnModuleInit {
     const total = totalResult[0]?.count ?? 0;
 
     return {
-      data: allUsers.map((u) => this.toPublicUserSummary(u)),
+      data: allUsers.map((row) => this.toPublicUserSummary(row)),
       pagination: this.buildPagination(page, limit, total),
     };
   }
@@ -740,10 +822,16 @@ export class UserService implements OnModuleInit {
 
     if (existingFollow) {
       if (existingFollow.status === "accepted") {
-        throw new BadRequestException("Already following this user");
+        return {
+          message: "Already following this user",
+          follow: existingFollow,
+        };
       }
       if (existingFollow.status === "pending") {
-        throw new BadRequestException("Follow request already pending");
+        return {
+          message: "Follow request already pending",
+          follow: existingFollow,
+        };
       }
       if (existingFollow.status === "blocked") {
         throw new ForbiddenException("You are blocked by this user");
@@ -793,6 +881,12 @@ export class UserService implements OnModuleInit {
   }
 
   async getPendingFollowRequests(followingId: string) {
+    const cacheKey = `user:${followingId}:pending_requests`;
+    const cachedPending = this.cacheService.get<any>(cacheKey);
+    if (cachedPending) {
+      return cachedPending;
+    }
+
     const pending = await db
       .select({
         followerId: follows.followerId,
@@ -811,6 +905,7 @@ export class UserService implements OnModuleInit {
         ),
       );
 
+    this.cacheService.set(cacheKey, pending, this.profileHeadCacheTtlMs);
     return pending;
   }
 
@@ -958,7 +1053,9 @@ export class UserService implements OnModuleInit {
       );
 
     if (!follow) {
-      throw new NotFoundException("Follow relationship not found");
+      return {
+        message: "Unfollowed successfully",
+      };
     }
 
     await db
