@@ -1,4 +1,4 @@
-import { IsEmail, IsNotEmpty, IsString } from "class-validator";
+import { IsEmail, IsNotEmpty, IsOptional, IsString } from "class-validator";
 
 export class RegisterDto {
     @IsNotEmpty({ message: "Username is required" })
@@ -29,6 +29,7 @@ export class RegisterDto {
     @IsString({ message: "Public key must be a string" })
     publicKey: string;
 
+    @IsOptional()
     @IsString({ message: "Push token must be a string" })
     pushToken?: string;
 }
