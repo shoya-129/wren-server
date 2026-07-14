@@ -5,6 +5,7 @@ import {
   NotFoundException,
   OnModuleInit,
 } from "@nestjs/common";
+import * as https from "https";
 import { and, desc, eq, isNotNull, isNull, or, sql, ne } from "drizzle-orm";
 import { BehaviorSubject, Observable } from "rxjs";
 import { RegisterDto } from "../auth/dto/register.user.dto";
@@ -142,27 +143,57 @@ export class UserService implements OnModuleInit {
   }
 
   private async sendPushNotification(pushToken: string, title: string, body: string, data?: any) {
-    if (!pushToken) return;
-    try {
-      const response = await fetch("https://exp.host/--/api/v2/push/send", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          to: pushToken,
-          sound: "default",
-          title,
-          body,
-          data,
-        }),
-      });
-      const resData = await response.json();
-      console.log("Push Notification Sent:", resData);
-      return resData;
-    } catch (error) {
-      console.error("Failed to send push notification:", error);
+    console.log(`[PushNotification] Attempting to send. Token: ${pushToken}, Title: ${title}, Body: ${body}`);
+    if (!pushToken) {
+      console.log("[PushNotification] Aborted. Push token is empty.");
+      return;
     }
+
+    const payload = JSON.stringify({
+      to: pushToken,
+      sound: "default",
+      title,
+      body,
+      data,
+    });
+
+    const options = {
+      hostname: "exp.host",
+      path: "/--/api/v2/push/send",
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Content-Length": Buffer.byteLength(payload),
+      },
+    };
+
+    return new Promise((resolve, reject) => {
+      const req = https.request(options, (res) => {
+        let responseBody = "";
+        res.on("data", (chunk) => {
+          responseBody += chunk;
+        });
+        res.on("end", () => {
+          try {
+            const parsed = JSON.parse(responseBody);
+            console.log("[PushNotification] Response from Expo:", parsed);
+            resolve(parsed);
+          } catch (e) {
+            reject(new Error("Failed to parse push notification response"));
+          }
+        });
+      });
+
+      req.on("error", (error) => {
+        console.error("[PushNotification] Failed to send push notification:", error);
+        reject(error);
+      });
+
+      req.write(payload);
+      req.end();
+    }).catch((err) => {
+      console.error("[PushNotification] Promise caught error:", err);
+    });
   }
 
   async triggerUserCountUpdate() {
@@ -918,12 +949,17 @@ export class UserService implements OnModuleInit {
       .select({ username: users.username })
       .from(users)
       .where(eq(users.uid, followerId));
+    
+    console.log(`[followUser] Target user: ${targetUser.username}, PushToken: ${targetUser.pushToken}, Follower: ${follower?.username}`);
+
     if (targetUser.pushToken && follower) {
       this.sendPushNotification(
         targetUser.pushToken,
         "New Follow Request",
         `You got a follow request from @${follower.username}`,
       );
+    } else {
+      console.log(`[followUser] Notification skipped. Target token present: ${!!targetUser.pushToken}, Follower present: ${!!follower}`);
     }
 
     return {

@@ -4,6 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
+import * as https from "https";
 import { v2 as cloudinary } from "cloudinary";
 import {
   and,
@@ -60,26 +61,52 @@ export class PostService {
 
   private async sendPushNotification(pushToken: string, title: string, body: string, data?: any) {
     if (!pushToken) return;
-    try {
-      const response = await fetch("https://exp.host/--/api/v2/push/send", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          to: pushToken,
-          sound: "default",
-          title,
-          body,
-          data,
-        }),
+
+    const payload = JSON.stringify({
+      to: pushToken,
+      sound: "default",
+      title,
+      body,
+      data,
+    });
+
+    const options = {
+      hostname: "exp.host",
+      path: "/--/api/v2/push/send",
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Content-Length": Buffer.byteLength(payload),
+      },
+    };
+
+    return new Promise((resolve, reject) => {
+      const req = https.request(options, (res) => {
+        let responseBody = "";
+        res.on("data", (chunk) => {
+          responseBody += chunk;
+        });
+        res.on("end", () => {
+          try {
+            const parsed = JSON.parse(responseBody);
+            console.log("Push Notification Sent:", parsed);
+            resolve(parsed);
+          } catch (e) {
+            reject(new Error("Failed to parse push notification response"));
+          }
+        });
       });
-      const resData = await response.json();
-      console.log("Push Notification Sent:", resData);
-      return resData;
-    } catch (error) {
-      console.error("Failed to send push notification:", error);
-    }
+
+      req.on("error", (error) => {
+        console.error("Failed to send push notification:", error);
+        reject(error);
+      });
+
+      req.write(payload);
+      req.end();
+    }).catch((err) => {
+      console.error("sendPushNotification promise caught error:", err);
+    });
   }
 
   async uploadMedia(file: { buffer: Buffer }) {
