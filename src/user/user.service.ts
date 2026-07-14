@@ -985,6 +985,8 @@ export class UserService implements OnModuleInit {
         username: users.username,
         name: users.name,
         publicKey: users.publicKey,
+        avatar: users.avatar,
+        verified: users.verified,
       })
       .from(follows)
       .innerJoin(users, eq(follows.followerId, users.uid))
