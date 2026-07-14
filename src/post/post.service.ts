@@ -443,7 +443,7 @@ export class PostService {
           .from(users)
           .where(eq(users.uid, post.uid));
         const [sender] = await db
-          .select({ username: users.username })
+          .select({ username: users.username, avatar: users.avatar })
           .from(users)
           .where(eq(users.uid, uid));
         if (author?.pushToken && sender) {
@@ -451,7 +451,7 @@ export class PostService {
             author.pushToken,
             "New Like",
             `@${sender.username} liked your post.`,
-            { senderUsername: sender.username }
+            { senderUsername: sender.username, senderAvatar: sender.avatar, postId }
           );
         }
       } catch (e) {
@@ -501,7 +501,7 @@ export class PostService {
           .from(users)
           .where(eq(users.uid, post.uid));
         const [sender] = await db
-          .select({ username: users.username })
+          .select({ username: users.username, avatar: users.avatar })
           .from(users)
           .where(eq(users.uid, uid));
         if (author?.pushToken && sender) {
@@ -509,7 +509,7 @@ export class PostService {
             author.pushToken,
             "New Dislike",
             `@${sender.username} disliked your post.`,
-            { senderUsername: sender.username }
+            { senderUsername: sender.username, senderAvatar: sender.avatar, postId }
           );
         }
       } catch (e) {
@@ -750,7 +750,7 @@ export class PostService {
             postAuthor.pushToken,
             "New Comment",
             `@${author.username} commented on your post.`,
-            { senderUsername: author.username }
+            { senderUsername: author.username, senderAvatar: author.avatar, postId }
           );
         }
       } catch (e) {

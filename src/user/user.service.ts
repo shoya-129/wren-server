@@ -916,14 +916,15 @@ export class UserService implements OnModuleInit {
       this.invalidateUserProfileCaches(followerId, followingId);
 
       const [follower] = await db
-        .select({ username: users.username })
-        .from(users)
-        .where(eq(users.uid, followerId));
+      .select({ username: users.username, avatar: users.avatar })
+      .from(users)
+      .where(eq(users.uid, followerId));
       if (targetUser.pushToken && follower) {
         this.sendPushNotification(
           targetUser.pushToken,
           "New Follow Request",
           `You got a follow request from @${follower.username}`,
+          { senderUsername: follower.username, senderAvatar: follower.avatar }
         );
       }
 
@@ -946,7 +947,7 @@ export class UserService implements OnModuleInit {
     this.invalidateUserProfileCaches(followerId, followingId);
 
     const [follower] = await db
-      .select({ username: users.username })
+      .select({ username: users.username, avatar: users.avatar })
       .from(users)
       .where(eq(users.uid, followerId));
     
@@ -957,6 +958,7 @@ export class UserService implements OnModuleInit {
         targetUser.pushToken,
         "New Follow Request",
         `You got a follow request from @${follower.username}`,
+        { senderUsername: follower.username, senderAvatar: follower.avatar }
       );
     } else {
       console.log(`[followUser] Notification skipped. Target token present: ${!!targetUser.pushToken}, Follower present: ${!!follower}`);
@@ -1041,7 +1043,7 @@ export class UserService implements OnModuleInit {
       .where(eq(users.uid, followerId));
 
     const [followingUser] = await db
-      .select({ username: users.username })
+      .select({ username: users.username, avatar: users.avatar })
       .from(users)
       .where(eq(users.uid, followingId));
 
@@ -1050,11 +1052,13 @@ export class UserService implements OnModuleInit {
         followerUser.pushToken,
         "Follow Request Accepted",
         `Your follow request to @${followingUser.username} was accepted.`,
+        { senderUsername: followingUser.username, senderAvatar: followingUser.avatar }
       );
       await this.sendPushNotification(
         followerUser.pushToken,
         "Secure Feed Shared",
         `You can now access @${followingUser.username}'s posts.`,
+        { senderUsername: followingUser.username, senderAvatar: followingUser.avatar }
       );
     }
 
@@ -1104,7 +1108,7 @@ export class UserService implements OnModuleInit {
       .where(eq(users.uid, followerId));
 
     const [followingUser] = await db
-      .select({ username: users.username })
+      .select({ username: users.username, avatar: users.avatar })
       .from(users)
       .where(eq(users.uid, followingId));
 
@@ -1113,6 +1117,7 @@ export class UserService implements OnModuleInit {
         followerUser.pushToken,
         "Follow Request Rejected",
         `Your follow request to @${followingUser.username} was rejected.`,
+        { senderUsername: followingUser.username, senderAvatar: followingUser.avatar }
       );
     }
 
