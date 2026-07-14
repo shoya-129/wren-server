@@ -58,6 +58,30 @@ export interface FeedPost {
 export class PostService {
   constructor(private readonly cacheService: CacheService) {}
 
+  private async sendPushNotification(pushToken: string, title: string, body: string, data?: any) {
+    if (!pushToken) return;
+    try {
+      const response = await fetch("https://exp.host/--/api/v2/push/send", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          to: pushToken,
+          sound: "default",
+          title,
+          body,
+          data,
+        }),
+      });
+      const resData = await response.json();
+      console.log("Push Notification Sent:", resData);
+      return resData;
+    } catch (error) {
+      console.error("Failed to send push notification:", error);
+    }
+  }
+
   async uploadMedia(file: { buffer: Buffer }) {
     if (!file || !file.buffer) {
       throw new BadRequestException("No file uploaded");
@@ -385,6 +409,29 @@ export class PostService {
 
     await db.insert(likes).values({ postId, uid });
 
+    if (post.uid !== uid) {
+      try {
+        const [author] = await db
+          .select({ pushToken: users.pushToken })
+          .from(users)
+          .where(eq(users.uid, post.uid));
+        const [sender] = await db
+          .select({ username: users.username })
+          .from(users)
+          .where(eq(users.uid, uid));
+        if (author?.pushToken && sender) {
+          this.sendPushNotification(
+            author.pushToken,
+            "New Like",
+            `@${sender.username} liked your post.`,
+            { senderUsername: sender.username }
+          );
+        }
+      } catch (e) {
+        console.error("Failed to send push notification for like:", e);
+      }
+    }
+
     this.cacheService.deletePattern("feed:");
     this.invalidateUserProfileCaches(post.uid);
     return { liked: true, message: "Liked successfully" };
@@ -419,6 +466,29 @@ export class PostService {
       .where(and(eq(likes.postId, postId), eq(likes.uid, uid)));
 
     await db.insert(dislikes).values({ postId, uid });
+
+    if (post.uid !== uid) {
+      try {
+        const [author] = await db
+          .select({ pushToken: users.pushToken })
+          .from(users)
+          .where(eq(users.uid, post.uid));
+        const [sender] = await db
+          .select({ username: users.username })
+          .from(users)
+          .where(eq(users.uid, uid));
+        if (author?.pushToken && sender) {
+          this.sendPushNotification(
+            author.pushToken,
+            "New Dislike",
+            `@${sender.username} disliked your post.`,
+            { senderUsername: sender.username }
+          );
+        }
+      } catch (e) {
+        console.error("Failed to send push notification for dislike:", e);
+      }
+    }
 
     this.cacheService.deletePattern("feed:");
     this.invalidateUserProfileCaches(post.uid);
@@ -641,6 +711,25 @@ export class PostService {
       })
       .from(users)
       .where(eq(users.uid, uid));
+
+    if (post.uid !== uid) {
+      try {
+        const [postAuthor] = await db
+          .select({ pushToken: users.pushToken })
+          .from(users)
+          .where(eq(users.uid, post.uid));
+        if (postAuthor?.pushToken && author) {
+          this.sendPushNotification(
+            postAuthor.pushToken,
+            "New Comment",
+            `@${author.username} commented on your post.`,
+            { senderUsername: author.username }
+          );
+        }
+      } catch (e) {
+        console.error("Failed to send push notification for comment:", e);
+      }
+    }
 
     this.cacheService.deletePattern("feed:");
     this.invalidateUserProfileCaches(uid, post.uid);

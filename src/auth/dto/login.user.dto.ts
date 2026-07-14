@@ -8,4 +8,7 @@ export class LoginUser {
     @IsNotEmpty({ message: "Password is required" })
     @IsString({ message: "Password must be a string" })
     password: string;
+
+    @IsString({ message: "Push token must be a string" })
+    pushToken?: string;
 }

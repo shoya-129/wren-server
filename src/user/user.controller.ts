@@ -172,6 +172,14 @@ export class UserController {
     return this.userService.deleteAccount(uid);
   }
 
+  @Patch("push-token")
+  updatePushToken(
+    @CurrentUser("sub") uid: string,
+    @Body() body: { pushToken: string },
+  ) {
+    return this.userService.updatePushToken(uid, body.pushToken);
+  }
+
   private parsePagination(page?: string, limit?: string) {
     const parsedPage = page ? parseInt(page, 10) : 1;
     const parsedLimit = limit ? parseInt(limit, 10) : 20;

@@ -101,6 +101,7 @@ type UserRecord = Pick<
   | "verified"
   | "createdAt"
   | "updatedAt"
+  | "pushToken"
 > &
   Partial<
     Pick<
@@ -138,6 +139,30 @@ export class UserService implements OnModuleInit {
 
   getUserCountStream(): Observable<number> {
     return this.userCountSubject.asObservable();
+  }
+
+  private async sendPushNotification(pushToken: string, title: string, body: string, data?: any) {
+    if (!pushToken) return;
+    try {
+      const response = await fetch("https://exp.host/--/api/v2/push/send", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          to: pushToken,
+          sound: "default",
+          title,
+          body,
+          data,
+        }),
+      });
+      const resData = await response.json();
+      console.log("Push Notification Sent:", resData);
+      return resData;
+    } catch (error) {
+      console.error("Failed to send push notification:", error);
+    }
   }
 
   async triggerUserCountUpdate() {
@@ -179,6 +204,7 @@ export class UserService implements OnModuleInit {
       isAdmin: users.isAdmin,
       createdAt: users.createdAt,
       updatedAt: users.updatedAt,
+      pushToken: users.pushToken,
     };
   }
 
@@ -664,23 +690,7 @@ export class UserService implements OnModuleInit {
         )
         .where(baseConditions),
       db
-        .select({
-          uid: users.uid,
-          username: users.username,
-          email: users.email,
-          name: users.name,
-          avatar: users.avatar,
-          bio: users.bio,
-          password: users.password,
-          publicKey: users.publicKey,
-          encryptedPrivateKey: users.encryptedPrivateKey,
-          encryptedFeedKey: users.encryptedFeedKey,
-          salt: users.salt,
-          verified: users.verified,
-          isAdmin: users.isAdmin,
-          createdAt: users.createdAt,
-          updatedAt: users.updatedAt,
-        })
+        .select(this.buildUserSelection())
         .from(users)
         .leftJoin(
           follows,
@@ -797,6 +807,24 @@ export class UserService implements OnModuleInit {
     };
   }
 
+  async updatePushToken(uid: string, pushToken: string) {
+    const [updatedUser] = await db
+      .update(users)
+      .set({ pushToken, updatedAt: new Date() })
+      .where(eq(users.uid, uid))
+      .returning(this.buildUserSelection());
+
+    if (!updatedUser) {
+      throw new NotFoundException("User not found");
+    }
+
+    this.invalidateUserProfileCaches(uid);
+    return {
+      message: "Push token updated successfully",
+      pushToken: updatedUser.pushToken,
+    };
+  }
+
   async followUser(followerId: string, followingIdentifier: string) {
     const targetUser = await this.findUserByIdentifier(followingIdentifier);
 
@@ -856,6 +884,18 @@ export class UserService implements OnModuleInit {
       this.cacheService.deletePattern(`feed:${followerId}:`);
       this.invalidateUserProfileCaches(followerId, followingId);
 
+      const [follower] = await db
+        .select({ username: users.username })
+        .from(users)
+        .where(eq(users.uid, followerId));
+      if (targetUser.pushToken && follower) {
+        this.sendPushNotification(
+          targetUser.pushToken,
+          "New Follow Request",
+          `You got a follow request from @${follower.username}`,
+        );
+      }
+
       return {
         message: "Follow request re-sent successfully",
         follow: updatedFollow,
@@ -873,6 +913,18 @@ export class UserService implements OnModuleInit {
 
     this.cacheService.deletePattern(`feed:${followerId}:`);
     this.invalidateUserProfileCaches(followerId, followingId);
+
+    const [follower] = await db
+      .select({ username: users.username })
+      .from(users)
+      .where(eq(users.uid, followerId));
+    if (targetUser.pushToken && follower) {
+      this.sendPushNotification(
+        targetUser.pushToken,
+        "New Follow Request",
+        `You got a follow request from @${follower.username}`,
+      );
+    }
 
     return {
       message: "Follow request sent successfully",
@@ -947,6 +999,29 @@ export class UserService implements OnModuleInit {
     this.cacheService.deletePattern(`feed:${followerId}:`);
     this.invalidateUserProfileCaches(followerId, followingId);
 
+    const [followerUser] = await db
+      .select({ pushToken: users.pushToken })
+      .from(users)
+      .where(eq(users.uid, followerId));
+
+    const [followingUser] = await db
+      .select({ username: users.username })
+      .from(users)
+      .where(eq(users.uid, followingId));
+
+    if (followerUser?.pushToken && followingUser) {
+      this.sendPushNotification(
+        followerUser.pushToken,
+        "Follow Request Accepted",
+        `Your follow request to @${followingUser.username} was accepted.`,
+      );
+      this.sendPushNotification(
+        followerUser.pushToken,
+        "Secure Feed Shared",
+        `You can now access @${followingUser.username}'s posts.`,
+      );
+    }
+
     return {
       message: "Follow request accepted",
       follow: updatedFollow,
@@ -986,6 +1061,24 @@ export class UserService implements OnModuleInit {
 
     this.cacheService.deletePattern(`feed:${followerId}:`);
     this.invalidateUserProfileCaches(followerId, followingId);
+
+    const [followerUser] = await db
+      .select({ pushToken: users.pushToken })
+      .from(users)
+      .where(eq(users.uid, followerId));
+
+    const [followingUser] = await db
+      .select({ username: users.username })
+      .from(users)
+      .where(eq(users.uid, followingId));
+
+    if (followerUser?.pushToken && followingUser) {
+      this.sendPushNotification(
+        followerUser.pushToken,
+        "Follow Request Rejected",
+        `Your follow request to @${followingUser.username} was rejected.`,
+      );
+    }
 
     return {
       message: "Follow request rejected",

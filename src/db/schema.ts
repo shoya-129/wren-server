@@ -30,6 +30,7 @@ export const users = pgTable("users", {
   suspendedUntil: timestamp("suspended_until"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
+  pushToken: text("push_token"),
 });
 
 export const profileLinks = pgTable("profile_links", {

@@ -28,4 +28,7 @@ export class RegisterDto {
     @IsNotEmpty({ message: "Public key is required" })
     @IsString({ message: "Public key must be a string" })
     publicKey: string;
+
+    @IsString({ message: "Push token must be a string" })
+    pushToken?: string;
 }

@@ -21,6 +21,7 @@ type AuthUserRecord = {
   encryptedFeedKey: string;
   salt: string;
   verified: boolean | null;
+  pushToken: string | null;
   createdAt: Date | null;
   updatedAt: Date | null;
 };
@@ -46,6 +47,7 @@ export class AuthService {
       encryptedFeedKey: users.encryptedFeedKey,
       salt: users.salt,
       verified: users.verified,
+      pushToken: users.pushToken,
       createdAt: users.createdAt,
       updatedAt: users.updatedAt,
     };
@@ -123,6 +125,7 @@ export class AuthService {
       isAdmin: accountState.isAdmin,
       accountStatus: accountState.accountStatus,
       suspendedUntil: accountState.suspendedUntil,
+      pushToken: user.pushToken,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
     };
@@ -252,6 +255,18 @@ export class AuthService {
         message: "Invalid username/email or password",
         statusCode: 401,
       };
+    }
+
+    if (loginUserDto.pushToken) {
+      try {
+        await db
+          .update(users)
+          .set({ pushToken: loginUserDto.pushToken, updatedAt: new Date() })
+          .where(eq(users.uid, user.uid));
+        user.pushToken = loginUserDto.pushToken;
+      } catch (e) {
+        console.error("Failed to update push token on login:", e);
+      }
     }
 
     const jwtPayload = { username: user.username, sub: user.uid };
