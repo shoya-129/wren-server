@@ -447,7 +447,7 @@ export class PostService {
           .from(users)
           .where(eq(users.uid, uid));
         if (author?.pushToken && sender) {
-          this.sendPushNotification(
+          await this.sendPushNotification(
             author.pushToken,
             "New Like",
             `@${sender.username} liked your post.`,
@@ -505,7 +505,7 @@ export class PostService {
           .from(users)
           .where(eq(users.uid, uid));
         if (author?.pushToken && sender) {
-          this.sendPushNotification(
+          await this.sendPushNotification(
             author.pushToken,
             "New Dislike",
             `@${sender.username} disliked your post.`,
@@ -746,7 +746,7 @@ export class PostService {
           .from(users)
           .where(eq(users.uid, post.uid));
         if (postAuthor?.pushToken && author) {
-          this.sendPushNotification(
+          await this.sendPushNotification(
             postAuthor.pushToken,
             "New Comment",
             `@${author.username} commented on your post.`,

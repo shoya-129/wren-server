@@ -953,7 +953,7 @@ export class UserService implements OnModuleInit {
     console.log(`[followUser] Target user: ${targetUser.username}, PushToken: ${targetUser.pushToken}, Follower: ${follower?.username}`);
 
     if (targetUser.pushToken && follower) {
-      this.sendPushNotification(
+      await this.sendPushNotification(
         targetUser.pushToken,
         "New Follow Request",
         `You got a follow request from @${follower.username}`,
@@ -1046,12 +1046,12 @@ export class UserService implements OnModuleInit {
       .where(eq(users.uid, followingId));
 
     if (followerUser?.pushToken && followingUser) {
-      this.sendPushNotification(
+      await this.sendPushNotification(
         followerUser.pushToken,
         "Follow Request Accepted",
         `Your follow request to @${followingUser.username} was accepted.`,
       );
-      this.sendPushNotification(
+      await this.sendPushNotification(
         followerUser.pushToken,
         "Secure Feed Shared",
         `You can now access @${followingUser.username}'s posts.`,
@@ -1109,7 +1109,7 @@ export class UserService implements OnModuleInit {
       .where(eq(users.uid, followingId));
 
     if (followerUser?.pushToken && followingUser) {
-      this.sendPushNotification(
+      await this.sendPushNotification(
         followerUser.pushToken,
         "Follow Request Rejected",
         `Your follow request to @${followingUser.username} was rejected.`,
