@@ -109,6 +109,62 @@ export class PostService {
     });
   }
 
+  async getPost(postId: string, uid: string): Promise<FeedPost> {
+    const [post] = await db
+      .select()
+      .from(posts)
+      .where(and(eq(posts.postId, postId), isNull(posts.deletedAt)));
+    if (!post) {
+      throw new NotFoundException("Post not found");
+    }
+
+    const likesCountSql = sql<number>`coalesce((select count(*)::int from ${likes} where ${likes.postId} = ${posts.postId}), 0)`;
+    const repostsCountSql = sql<number>`coalesce((select count(*)::int from ${reposts} where ${reposts.postId} = ${posts.postId}), 0)`;
+    const repliesCountSql = sql<number>`coalesce((select count(*)::int from ${posts} replies where replies.reply_to = ${posts.postId} and replies.deleted_at is null), 0)`;
+
+    const [row] = await db
+      .select({
+        post: posts,
+        author: {
+          uid: users.uid,
+          username: users.username,
+          name: users.name,
+          avatar: users.avatar,
+          verified: users.verified,
+        },
+        follow: {
+          encryptedFeedKey: follows.encryptedFeedKey,
+        },
+        likesCount: likesCountSql,
+        repostsCount: repostsCountSql,
+        repliesCount: repliesCountSql,
+      })
+      .from(posts)
+      .innerJoin(users, eq(posts.uid, users.uid))
+      .leftJoin(
+        follows,
+        and(
+          eq(follows.followingId, posts.uid),
+          eq(follows.followerId, uid),
+          eq(follows.status, "accepted"),
+        ),
+      )
+      .where(eq(posts.postId, postId));
+
+    if (!row) {
+      throw new NotFoundException("Post not found");
+    }
+
+    return this.mapPostRow({
+      post: row.post,
+      author: row.author,
+      likesCount: row.likesCount,
+      repostsCount: row.repostsCount,
+      repliesCount: row.repliesCount,
+      encryptedFeedKey: row.follow?.encryptedFeedKey ?? null,
+    });
+  }
+
   async uploadMedia(file: { buffer: Buffer }) {
     if (!file || !file.buffer) {
       throw new BadRequestException("No file uploaded");

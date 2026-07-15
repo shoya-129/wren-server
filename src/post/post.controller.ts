@@ -75,6 +75,11 @@ export class PostController {
     return this.postService.reportPost(postId, uid, reportPostDto);
   }
 
+  @Get(":id")
+  getPost(@CurrentUser("sub") uid: string, @Param("id") postId: string) {
+    return this.postService.getPost(postId, uid);
+  }
+
   @Get(":id/replies")
   getReplies(@CurrentUser("sub") uid: string, @Param("id") postId: string) {
     return this.postService.getReplies(postId, uid);
